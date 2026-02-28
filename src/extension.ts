@@ -1,26 +1,53 @@
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 
-// This method is called when your extension is activated
-// Your extension is activated the very first time the command is executed
-export function activate(context: vscode.ExtensionContext) {
+const PROJECT_MD_TEMPLATE = `# Project
 
-	// Use the console to output diagnostic information (console.log) and errors (console.error)
-	// This line of code will only be executed once when your extension is activated
-	console.log('Congratulations, your extension "contextos" is now active!');
+## Description
+<!-- Beskriv prosjektet her -->
 
-	// The command has been defined in the package.json file
-	// Now provide the implementation of the command with registerCommand
-	// The commandId parameter must match the command field in package.json
-	const disposable = vscode.commands.registerCommand('contextos.helloWorld', () => {
-		// The code you place here will be executed every time your command is executed
-		// Display a message box to the user
-		vscode.window.showInformationMessage('Hello World from contextos!');
-	});
+## Goals
+<!-- Hva er målet med prosjektet? -->
 
-	context.subscriptions.push(disposable);
+## Tech Stack
+<!-- Teknisk stack -->
+`;
+
+function ensureSystemRepo(workspaceRoot: string) {
+    const systemRepoPath = path.join(workspaceRoot, '.contextos', 'system-repo');
+    const dirs = [
+        systemRepoPath,
+        path.join(systemRepoPath, 'decisions'),
+        path.join(systemRepoPath, 'components'),
+    ];
+
+    for (const dir of dirs) {
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+    }
+
+    const projectMd = path.join(systemRepoPath, 'project.md');
+    if (!fs.existsSync(projectMd)) {
+        fs.writeFileSync(projectMd, PROJECT_MD_TEMPLATE, 'utf8');
+    }
 }
 
-// This method is called when your extension is deactivated
+export function activate(context: vscode.ExtensionContext) {
+    console.log('ContextOS extension is now active!');
+
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (workspaceFolders && workspaceFolders.length > 0) {
+        const workspaceRoot = workspaceFolders[0].uri.fsPath;
+        ensureSystemRepo(workspaceRoot);
+    }
+
+    const disposable = vscode.commands.registerCommand('contextos.helloWorld', () => {
+        vscode.window.showInformationMessage('Hello World from contextos!');
+    });
+
+    context.subscriptions.push(disposable);
+}
+
 export function deactivate() {}
