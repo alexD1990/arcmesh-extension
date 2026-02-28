@@ -39,6 +39,7 @@ const vscode = __importStar(require("vscode"));
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const cp = __importStar(require("child_process"));
+const chatProvider_1 = require("./chatProvider");
 const PROJECT_MD_TEMPLATE = `# Project
 
 ## Description
@@ -58,43 +59,39 @@ function ensureSystemRepo(workspaceRoot) {
         path.join(systemRepoPath, 'components'),
     ];
     for (const dir of dirs) {
-        if (!fs.existsSync(dir)) {
+        if (!fs.existsSync(dir))
             fs.mkdirSync(dir, { recursive: true });
-        }
     }
     const projectMd = path.join(systemRepoPath, 'project.md');
-    if (!fs.existsSync(projectMd)) {
+    if (!fs.existsSync(projectMd))
         fs.writeFileSync(projectMd, PROJECT_MD_TEMPLATE, 'utf8');
-    }
     return systemRepoPath;
 }
 let mcpProcess;
 function activate(context) {
     console.log('ContextOS extension is now active!');
+    let systemRepoPath = '';
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (workspaceFolders && workspaceFolders.length > 0) {
         const workspaceRoot = workspaceFolders[0].uri.fsPath;
-        const systemRepoPath = ensureSystemRepo(workspaceRoot);
+        systemRepoPath = ensureSystemRepo(workspaceRoot);
         const serverScript = path.join(context.extensionPath, 'out', 'mcpServer.js');
         mcpProcess = cp.spawn('node', [serverScript, systemRepoPath], {
             stdio: ['pipe', 'pipe', 'pipe'],
         });
-        mcpProcess.stderr?.on('data', (data) => {
-            console.error(`[ContextOS MCP] ${data}`);
-        });
-        mcpProcess.on('exit', (code) => {
-            console.log(`[ContextOS MCP] exited with code ${code}`);
-        });
+        mcpProcess.stderr?.on('data', (data) => console.error(`[ContextOS MCP] ${data}`));
+        mcpProcess.on('exit', (code) => console.log(`[ContextOS MCP] exited with code ${code}`));
         vscode.window.showInformationMessage('ContextOS: MCP-server startet.');
     }
+    const provider = new chatProvider_1.ChatViewProvider(context.extensionUri, systemRepoPath);
+    context.subscriptions.push(vscode.window.registerWebviewViewProvider(chatProvider_1.ChatViewProvider.viewType, provider));
     const disposable = vscode.commands.registerCommand('contextos.helloWorld', () => {
         vscode.window.showInformationMessage('Hello World from contextos!');
     });
     context.subscriptions.push(disposable);
 }
 function deactivate() {
-    if (mcpProcess) {
+    if (mcpProcess)
         mcpProcess.kill();
-    }
 }
 //# sourceMappingURL=extension.js.map
