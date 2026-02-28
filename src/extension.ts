@@ -5,6 +5,7 @@ import * as cp from 'child_process';
 import * as os from 'os';
 import Anthropic from '@anthropic-ai/sdk';
 import { ChatViewProvider } from './chatProvider';
+import { ReviewPanel, ReviewDraft } from './reviewProvider';
 
 const PROJECT_MD_TEMPLATE = `# Project
 
@@ -62,22 +63,57 @@ function readSystemRepo(systemRepoPath: string): string {
     return result.join('\n\n');
 }
 
+function parseDraft(raw: string): ReviewDraft {
+    // Hent seksjonene ved hjelp av XML-lignende tagger
+    function extract(tag: string): string {
+        const re = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i');
+        const m = raw.match(re);
+        return m ? m[1].trim() : '';
+    }
+    const changelog = extract('changelog') || raw; // fallback: hele teksten i changelog
+    const components = extract('components');
+    const decisions = extract('decisions');
+    return { changelog, components, decisions };
+}
+
 async function handleDiff(diff: string, systemRepoPath: string) {
     const apiKey = vscode.workspace.getConfiguration('contextos').get<string>('apiKey');
     if (!apiKey) { vscode.window.showWarningMessage('ContextOS: Sett contextos.apiKey.'); return; }
 
     const client = new Anthropic({ apiKey });
-    const prompt = `Du er en teknisk dokumentasjonshjelper for prosjektet beskrevet i system-repoet.\nBasert på følgende git diff, generer:\n1. En kort changelog-entry (maks 3 linjer)\n2. Eventuelle oppdateringer til berørte komponenter\n3. Eventuelle beslutninger som bør dokumenteres\n\nGit diff:\n${diff}\n\nEksisterende system-repo kontekst:\n${readSystemRepo(systemRepoPath)}`;
+    const prompt = `Du er en teknisk dokumentasjonshjelper for prosjektet beskrevet i system-repoet.
+Basert på følgende git diff, generer dokumentasjon strukturert med disse XML-taggene:
+
+<changelog>
+En kort changelog-entry (maks 3 linjer) som beskriver hva som ble endret.
+</changelog>
+
+<components>
+Eventuelle oppdateringer til berørte komponenter. La tagg-innholdet være tomt om ingen komponenter er berørt.
+</components>
+
+<decisions>
+Eventuelle beslutninger som bør dokumenteres. La tagg-innholdet være tomt om ingen nye beslutninger.
+</decisions>
+
+Git diff:
+${diff}
+
+Eksisterende system-repo kontekst:
+${readSystemRepo(systemRepoPath)}`;
 
     try {
-        const response = await client.messages.create({ model: 'claude-sonnet-4-6', max_tokens: 1024, messages: [{ role: 'user', content: prompt }] });
-        const block = response.content[0];
-        const draft = block.type === 'text' ? block.text : '(ingen tekst)';
-        const draftPath = path.join(os.tmpdir(), 'contextos-draft.md');
-        fs.writeFileSync(draftPath, draft, 'utf8');
-        vscode.window.showInformationMessage('ContextOS: AI-dokumentasjon generert etter commit.', 'Vis utkast').then(action => {
-            if (action === 'Vis utkast') vscode.workspace.openTextDocument(draftPath).then(doc => vscode.window.showTextDocument(doc));
+        const response = await client.messages.create({
+            model: 'claude-sonnet-4-6',
+            max_tokens: 1024,
+            messages: [{ role: 'user', content: prompt }]
         });
+        const block = response.content[0];
+        const raw = block.type === 'text' ? block.text : '';
+        const draft = parseDraft(raw);
+
+        // Åpne review-panel
+        ReviewPanel.createOrShow(systemRepoPath, draft);
     } catch (e: unknown) {
         vscode.window.showErrorMessage(`ContextOS: Feil: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -120,6 +156,23 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, provider));
     context.subscriptions.push(vscode.commands.registerCommand('contextos.helloWorld', () => {
         vscode.window.showInformationMessage('Hello World from contextos!');
+    }));
+
+    // Manuell trigger for testing: åpne review-panel med dummy-utkast
+    context.subscriptions.push(vscode.commands.registerCommand('contextos.openReview', async () => {
+        const draftPath = path.join(os.tmpdir(), 'contextos-draft.md');
+        if (fs.existsSync(draftPath)) {
+            const raw = fs.readFileSync(draftPath, 'utf8');
+            const draft = parseDraft(raw);
+            ReviewPanel.createOrShow(systemRepoPath, draft);
+        } else {
+            // Åpne med tomt utkast for testing
+            ReviewPanel.createOrShow(systemRepoPath, {
+                changelog: '(ingen utkast funnet – skriv inn manuelt)',
+                components: '',
+                decisions: '',
+            });
+        }
     }));
 }
 
