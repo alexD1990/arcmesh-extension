@@ -10,6 +10,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         private readonly extensionUri: vscode.Uri,
         private systemRepoPath: string
     ) {}
+    private conversationHistory: Anthropic.MessageParam[] = [];
 
     resolveWebviewView(webviewView: vscode.WebviewView) {
         webviewView.webview.options = { enableScripts: true };
@@ -19,6 +20,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             if (msg.command === 'send') {
                 const reply = await this.handleMessage(msg.text, msg.planningMode === true);
                 webviewView.webview.postMessage({ command: 'reply', text: reply });
+            }
+            if (msg.command === 'newChat') {
+                this.conversationHistory = [];
+                webviewView.webview.postMessage({ command: 'cleared' });
             }
         });
     }
@@ -80,7 +85,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             },
         }] : [];
 
-        const messages: Anthropic.MessageParam[] = [{ role: 'user', content: userText }];
+        this.conversationHistory.push({ role: 'user', content: userText });
+        const messages = this.conversationHistory;
 
         try {
             let response = await client.messages.create({
@@ -140,6 +146,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   <input id="input" type="text" placeholder="Spør om prosjektet..." />
   <button id="send">Send</button>
   <button id="planning-toggle" style="background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; padding: 4px 10px; border-radius: 3px; cursor: pointer;">Planlegging: AV</button>
+  <button id="new-chat" style="background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; padding: 4px 10px; border-radius: 3px; cursor: pointer;">Ny chat</button>
 </div>
 <script>
   const vscode = acquireVsCodeApi();
@@ -185,7 +192,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       addMsg(msg.text, 'assistant');
       send.disabled = false;
     }
+    if (msg.command === 'cleared') {
+      messages.innerHTML = '';
+    }
   });
+
+  document.getElementById('new-chat').addEventListener('click', () => {
+    vscode.postMessage({ command: 'newChat' });
+  });
+    
 </script>
 </body>
 </html>`;
