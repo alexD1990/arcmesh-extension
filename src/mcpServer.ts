@@ -42,5 +42,24 @@ server.tool('write_file', 'Write a file to the system repo', { path: z.string(),
     return { content: [{ type: 'text', text: 'OK' }] };
 });
 
+server.tool(
+    'write_planning_doc',
+    'Write a planning document directly to docs/ or decisions/ in the system repo. Only allowed paths: docs/ and decisions/. Cannot write to changelog.md or components/.',
+    { path: z.string(), content: z.string() },
+    async ({ path: filePath, content }) => {
+        const normalized = filePath.replace(/\\/g, '/');
+        const allowed = normalized.startsWith('docs/') || normalized.startsWith('decisions/');
+        if (!allowed) {
+            return { content: [{ type: 'text', text: `ERROR: write_planning_doc can only write to docs/ or decisions/. Got: ${filePath}` }] };
+        }
+        const full = path.resolve(systemRepoPath, filePath);
+        if (!full.startsWith(path.resolve(systemRepoPath))) {
+            return { content: [{ type: 'text', text: 'ERROR: Path traversal not allowed.' }] };
+        }
+        fs.mkdirSync(path.dirname(full), { recursive: true });
+        fs.writeFileSync(full, content, 'utf8');
+        return { content: [{ type: 'text', text: `OK: wrote ${filePath}` }] };
+    }
+);
 const transport = new StdioServerTransport();
 server.connect(transport);

@@ -17,7 +17,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         webviewView.webview.onDidReceiveMessage(async (msg) => {
             if (msg.command === 'send') {
-                const reply = await this.handleMessage(msg.text);
+                const reply = await this.handleMessage(msg.text, msg.planningMode === true);
                 webviewView.webview.postMessage({ command: 'reply', text: reply });
             }
         });
@@ -45,20 +45,70 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         return result;
     }
 
-    private async handleMessage(userText: string): Promise<string> {
+    private writePlanningDoc(filePath: string, content: string): string {
+        const normalized = filePath.replace(/\\/g, '/');
+        const allowed = normalized.startsWith('docs/') || normalized.startsWith('decisions/');
+        if (!allowed) {
+            return `ERROR: kan kun skrive til docs/ eller decisions/. Fikk: ${filePath}`;
+        }
+        const full = path.resolve(this.systemRepoPath, filePath);
+        if (!full.startsWith(path.resolve(this.systemRepoPath))) {
+            return 'ERROR: Path traversal ikke tillatt.';
+        }
+        fs.mkdirSync(path.dirname(full), { recursive: true });
+        fs.writeFileSync(full, content, 'utf8');
+        return `OK: skrev ${filePath}`;
+    }
+
+    private async handleMessage(userText: string, planningMode: boolean = false): Promise<string> {
         const apiKey = vscode.workspace.getConfiguration('contextos').get<string>('apiKey');
         if (!apiKey) return '⚠️ Sett contextos.apiKey i VS Code settings.';
 
         const systemRepoContent = this.readSystemRepo();
         const client = new Anthropic({ apiKey });
 
+        const tools: Anthropic.Tool[] = planningMode ? [{
+            name: 'write_planning_doc',
+            description: 'Skriv et plandokument direkte til docs/ eller decisions/ i system-repoet.',
+            input_schema: {
+                type: 'object' as const,
+                properties: {
+                    path: { type: 'string', description: 'Relativ sti, må starte med docs/ eller decisions/' },
+                    content: { type: 'string', description: 'Innholdet i filen' },
+                },
+                required: ['path', 'content'],
+            },
+        }] : [];
+
+        const messages: Anthropic.MessageParam[] = [{ role: 'user', content: userText }];
+
         try {
-            const response = await client.messages.create({
+            let response = await client.messages.create({
                 model: 'claude-sonnet-4-6',
                 max_tokens: 1024,
                 system: `Du er en hjelpsom AI-assistent med kontekst fra prosjektets system-repo.\n\n${systemRepoContent}`,
-                messages: [{ role: 'user', content: userText }],
+                messages,
+                ...(tools.length > 0 ? { tools } : {}),
             });
+
+            // tool_use loop
+            while (response.stop_reason === 'tool_use') {
+                const toolUseBlock = response.content.find(b => b.type === 'tool_use') as Anthropic.ToolUseBlock;
+                const input = toolUseBlock.input as { path: string; content: string };
+                const result = this.writePlanningDoc(input.path, input.content);
+
+                messages.push({ role: 'assistant', content: response.content });
+                messages.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseBlock.id, content: result }] });
+
+                response = await client.messages.create({
+                    model: 'claude-sonnet-4-6',
+                    max_tokens: 1024,
+                    system: `Du er en hjelpsom AI-assistent med kontekst fra prosjektets system-repo.\n\n${systemRepoContent}`,
+                    messages,
+                    tools,
+                });
+            }
+
             const block = response.content[0];
             return block.type === 'text' ? block.text : '(ingen tekst i svar)';
         } catch (e: unknown) {
@@ -89,6 +139,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <div id="input-row">
   <input id="input" type="text" placeholder="Spør om prosjektet..." />
   <button id="send">Send</button>
+  <button id="planning-toggle" style="background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; padding: 4px 10px; border-radius: 3px; cursor: pointer;">Planlegging: AV</button>
 </div>
 <script>
   const vscode = acquireVsCodeApi();
@@ -111,13 +162,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     addMsg(text, 'user');
     input.value = '';
     const thinking = addMsg('Tenker...', 'assistant thinking');
-    vscode.postMessage({ command: 'send', text });
+    vscode.postMessage({ command: 'send', text, planningMode });
     send.disabled = true;
 
     window._thinking = thinking;
   });
 
   input.addEventListener('keydown', e => { if (e.key === 'Enter') send.click(); });
+  let planningMode = false;
+  const toggle = document.getElementById('planning-toggle');
+  toggle.addEventListener('click', () => {
+    planningMode = !planningMode;
+    toggle.textContent = planningMode ? 'Planlegging: PÅ' : 'Planlegging: AV';
+    toggle.style.background = planningMode ? 'var(--vscode-button-background)' : 'var(--vscode-button-secondaryBackground)';
+    toggle.style.color = planningMode ? 'var(--vscode-button-foreground)' : 'var(--vscode-button-secondaryForeground)';
+  });
 
   window.addEventListener('message', e => {
     const msg = e.data;
