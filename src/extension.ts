@@ -23,6 +23,18 @@ const PROJECT_MD_TEMPLATE = `# Project
 
 const DIFF_TEMP_FILE = path.join(os.tmpdir(), 'contextos-post-commit.diff');
 
+const ARCHITECTURE_MD_TEMPLATE = `# Architecture
+
+## Overview
+<!-- Overordnet arkitektur -->
+
+## Key Components
+<!-- Viktige komponenter og deres ansvar -->
+
+## Data Flow
+<!-- Dataflyt gjennom systemet -->
+`;
+
 function ensureSystemRepo(workspaceRoot: string) {
     const systemRepoPath = path.join(workspaceRoot, '.contextos', 'system-repo');
     const dirs = [systemRepoPath, path.join(systemRepoPath, 'decisions'), path.join(systemRepoPath, 'components')];
@@ -31,6 +43,8 @@ function ensureSystemRepo(workspaceRoot: string) {
     }
     const projectMd = path.join(systemRepoPath, 'project.md');
     if (!fs.existsSync(projectMd)) fs.writeFileSync(projectMd, PROJECT_MD_TEMPLATE, 'utf8');
+    const architectureMd = path.join(systemRepoPath, 'architecture.md');
+    if (!fs.existsSync(architectureMd)) fs.writeFileSync(architectureMd, ARCHITECTURE_MD_TEMPLATE, 'utf8');
     return systemRepoPath;
 }
 

@@ -27,7 +27,7 @@ export class ReviewPanel {
         this._panel.webview.onDidReceiveMessage(
             async (msg) => {
                 if (msg.command === 'approve') {
-                    await this._writeToSystemRepo(msg.changelog, msg.components, msg.decisions);
+                    await this._writeToSystemRepo(msg.changelog, msg.components, msg.decisions, msg.componentFile ?? '', msg.decisionFile ?? '');
                     vscode.window.showInformationMessage('ContextOS: Dokumentasjon godkjent og lagret i system-repoet.');
                     this.dispose();
                 } else if (msg.command === 'reject') {
@@ -65,7 +65,7 @@ export class ReviewPanel {
         this._panel.webview.html = this._getHtml(draft);
     }
 
-    private async _writeToSystemRepo(changelog: string, components: string, decisions: string) {
+    private async _writeToSystemRepo(changelog: string, components: string, decisions: string, componentFile: string, decisionFile: string) {
         if (!this.systemRepoPath || !fs.existsSync(this.systemRepoPath)) {
             vscode.window.showErrorMessage('ContextOS: system-repo ikke funnet.');
             return;
@@ -80,26 +80,26 @@ export class ReviewPanel {
             fs.writeFileSync(changelogPath, entry + existing, 'utf8');
         }
 
-        // Skriv komponent-oppdateringer til components/updates.md
+        // Skriv komponent-oppdateringer til components/{komponentnavn}.md
         if (components.trim()) {
             const compDir = path.join(this.systemRepoPath, 'components');
             if (!fs.existsSync(compDir)) fs.mkdirSync(compDir, { recursive: true });
-            const compPath = path.join(compDir, 'updates.md');
+            const safeName = componentFile.trim().replace(/[^a-zA-Z0-9._-]/g, '-') || 'misc';
+            const compPath = path.join(compDir, safeName.endsWith('.md') ? safeName : `${safeName}.md`);
             const existing = fs.existsSync(compPath) ? fs.readFileSync(compPath, 'utf8') : '';
             const timestamp = new Date().toISOString().split('T')[0];
             const entry = `## ${timestamp}\n\n${components.trim()}\n\n`;
             fs.writeFileSync(compPath, entry + existing, 'utf8');
         }
 
-        // Skriv beslutninger til decisions/log.md
+        // Skriv beslutninger til decisions/{dato}-{slug}.md
         if (decisions.trim()) {
             const decDir = path.join(this.systemRepoPath, 'decisions');
             if (!fs.existsSync(decDir)) fs.mkdirSync(decDir, { recursive: true });
-            const decPath = path.join(decDir, 'log.md');
-            const existing = fs.existsSync(decPath) ? fs.readFileSync(decPath, 'utf8') : '';
             const timestamp = new Date().toISOString().split('T')[0];
-            const entry = `## ${timestamp}\n\n${decisions.trim()}\n\n`;
-            fs.writeFileSync(decPath, entry + existing, 'utf8');
+            const safeSlug = decisionFile.trim().replace(/[^a-zA-Z0-9._-]/g, '-') || 'decision';
+            const decPath = path.join(decDir, `${timestamp}-${safeSlug.endsWith('.md') ? safeSlug.slice(0, -3) : safeSlug}.md`);
+            fs.writeFileSync(decPath, `## ${timestamp}\n\n${decisions.trim()}\n`, 'utf8');
         }
     }
 
@@ -202,15 +202,17 @@ export class ReviewPanel {
 </div>
 
 <div class="section">
-  <label>Komponent-oppdateringer <span class="badge">components/updates.md</span></label>
+  <label>Komponent-oppdateringer</label>
+  <input id="componentFile" type="text" placeholder="komponentnavn (f.eks. ProductCard)" style="width:100%;margin-bottom:6px;padding:6px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border);border-radius:3px;" />
   <textarea id="components">${esc(draft.components)}</textarea>
-  <p class="hint">La stå tomt om ingen komponentendringer. Legges til i components/updates.md.</p>
+  <p class="hint">Filnavn avgjør hvilken fil under <code>components/</code> som oppdateres. La tomt for å hoppe over.</p>
 </div>
 
 <div class="section">
-  <label>Beslutninger <span class="badge">decisions/log.md</span></label>
+  <label>Beslutninger</label>
+  <input id="decisionFile" type="text" placeholder="slug (f.eks. auth-strategi)" style="width:100%;margin-bottom:6px;padding:6px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border);border-radius:3px;" />
   <textarea id="decisions">${esc(draft.decisions)}</textarea>
-  <p class="hint">La stå tomt om ingen nye beslutninger. Legges til i decisions/log.md.</p>
+  <p class="hint">Lagres som <code>decisions/{dato}-{slug}.md</code>. La tomt for å hoppe over.</p>
 </div>
 
 <div class="actions">
@@ -226,6 +228,8 @@ export class ReviewPanel {
       changelog: document.getElementById('changelog').value,
       components: document.getElementById('components').value,
       decisions: document.getElementById('decisions').value,
+      componentFile: document.getElementById('componentFile').value,
+      decisionFile: document.getElementById('decisionFile').value,
     });
   });
   document.getElementById('btn-reject').addEventListener('click', () => {
