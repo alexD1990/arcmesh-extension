@@ -6,6 +6,7 @@ import * as os from 'os';
 import Anthropic from '@anthropic-ai/sdk';
 import { ChatViewProvider } from './chatProvider';
 import { ReviewPanel, ReviewDraft } from './reviewProvider';
+import * as yaml from 'js-yaml';
 
 const PROJECT_MD_TEMPLATE = `# Project
 
@@ -30,6 +31,68 @@ function ensureSystemRepo(workspaceRoot: string) {
     const projectMd = path.join(systemRepoPath, 'project.md');
     if (!fs.existsSync(projectMd)) fs.writeFileSync(projectMd, PROJECT_MD_TEMPLATE, 'utf8');
     return systemRepoPath;
+}
+
+function ensureConfig(workspaceRoot: string): string {
+    const configDir = path.join(workspaceRoot, '.contextos');
+    if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true });
+    const configPath = path.join(configDir, 'config.yaml');
+    if (!fs.existsSync(configPath)) {
+        const projectName = path.basename(workspaceRoot);
+        const content = [
+            `project:`,
+            `  name: ${projectName}`,
+            `  description: ""`,
+            ``,
+            `context_map:`,
+            `  "src/components/": components/`,
+            `  "src/api/":        decisions/api.md`,
+            `  "src/lib/":        components/lib.md`,
+            `  "*.config.*":      decisions/config.md`,
+            ``,
+            `triggers:`,
+            `  auto_generate: true`,
+            `  on_save: false`,
+            ``,
+            `model:`,
+            `  provider: anthropic`,
+            `  name: claude-sonnet-4-6`,
+        ].join('\n') + '\n';
+        fs.writeFileSync(configPath, content, 'utf8');
+        console.log(`[ContextOS] config.yaml opprettet: ${configPath}`);
+    }
+    return configPath;
+}
+
+interface ContextOSConfig {
+    project: { name: string; description: string };
+    context_map: Record<string, string>;
+    triggers: { auto_generate: boolean; on_save: boolean };
+    model: { provider: string; name: string };
+}
+
+function loadConfig(workspaceRoot: string): ContextOSConfig {
+    const configPath = path.join(workspaceRoot, '.contextos', 'config.yaml');
+    const defaultConfig: ContextOSConfig = {
+        project: { name: path.basename(workspaceRoot), description: '' },
+        context_map: {},
+        triggers: { auto_generate: true, on_save: false },
+        model: { provider: 'anthropic', name: 'claude-sonnet-4-6' }
+    };
+    if (!fs.existsSync(configPath)) {
+        console.warn('[ContextOS] config.yaml ikke funnet – bruker default-konfig.');
+        return defaultConfig;
+    }
+    try {
+        const parsed = yaml.load(fs.readFileSync(configPath, 'utf8')) as Partial<ContextOSConfig>;
+        if (!parsed?.project) console.warn('[ContextOS] config.yaml mangler "project"-felt.');
+        if (!parsed?.triggers) console.warn('[ContextOS] config.yaml mangler "triggers"-felt.');
+        if (!parsed?.model) console.warn('[ContextOS] config.yaml mangler "model"-felt.');
+        return { ...defaultConfig, ...parsed };
+    } catch (e) {
+        console.error(`[ContextOS] Feil ved parsing av config.yaml: ${e}`);
+        return defaultConfig;
+    }
 }
 
 function installGitHook(workspaceRoot: string) {
@@ -157,6 +220,8 @@ export function activate(context: vscode.ExtensionContext) {
     if (workspaceFolders && workspaceFolders.length > 0) {
         const workspaceRoot = workspaceFolders[0].uri.fsPath;
         systemRepoPath = ensureSystemRepo(workspaceRoot);
+        const configPath = ensureConfig(workspaceRoot);
+        const config = loadConfig(workspaceRoot);
         installGitHook(workspaceRoot);
 
         const serverScript = path.join(context.extensionPath, 'out', 'mcpServer.js');
