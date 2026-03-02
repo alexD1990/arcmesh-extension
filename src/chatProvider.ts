@@ -2,6 +2,8 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import Anthropic from '@anthropic-ai/sdk';
+import * as yaml from 'js-yaml';
+import { resolveContext } from './contextResolver';
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'contextos.chatView';
@@ -28,16 +30,61 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         });
     }
 
-    private readSystemRepo(): string {
+    private loadContextMap(): Record<string, string> {
+        if (!this.systemRepoPath) return {};
+        const workspaceRoot = path.resolve(this.systemRepoPath, '..', '..');
+        const configPath = path.join(workspaceRoot, '.contextos', 'config.yaml');
+        if (!fs.existsSync(configPath)) return {};
+        try {
+            const parsed = yaml.load(fs.readFileSync(configPath, 'utf8')) as any;
+            return parsed?.context_map ?? {};
+        } catch {
+            return {};
+        }
+    }
+
+    private readSystemRepo(changedFiles?: string[]): string {
         if (!this.systemRepoPath || !fs.existsSync(this.systemRepoPath)) {
             return '(system-repo ikke funnet)';
         }
-        const files = this.collectFiles(this.systemRepoPath);
-        return files.map(f => {
-            const rel = path.relative(this.systemRepoPath, f);
-            const content = fs.readFileSync(f, 'utf8');
-            return `### ${rel}\n${content}`;
-        }).join('\n\n');
+
+        let selectedPaths: string[];
+        if (changedFiles && changedFiles.length > 0) {
+            const contextMap = this.loadContextMap();
+            selectedPaths = resolveContext(changedFiles, contextMap);
+        } else {
+            // Chat uten diff-kontekst: send hele system-repoet
+            const files = this.collectFiles(this.systemRepoPath);
+            return files.map(f => {
+                const rel = path.relative(this.systemRepoPath, f);
+                return `### ${rel}\n${fs.readFileSync(f, 'utf8')}`;
+            }).join('\n\n');
+        }
+
+        const result: string[] = [];
+        for (const selected of selectedPaths) {
+            const full = path.join(this.systemRepoPath, selected);
+            if (!fs.existsSync(full)) continue;
+            const stat = fs.statSync(full);
+            if (stat.isDirectory()) {
+                for (const entry of fs.readdirSync(full, { withFileTypes: true })) {
+                    if (entry.isFile()) {
+                        const filePath = path.join(full, entry.name);
+                        const rel = path.relative(this.systemRepoPath, filePath);
+                        result.push(`### ${rel}\n${fs.readFileSync(filePath, 'utf8')}`);
+                    }
+                }
+            } else {
+                const rel = path.relative(this.systemRepoPath, full);
+                if (rel === 'changelog.md') {
+                    const lines = fs.readFileSync(full, 'utf8').split('\n');
+                    result.push(`### ${rel}\n${lines.slice(-10).join('\n')}`);
+                } else {
+                    result.push(`### ${rel}\n${fs.readFileSync(full, 'utf8')}`);
+                }
+            }
+        }
+        return result.join('\n\n');
     }
 
     private collectFiles(dir: string): string[] {

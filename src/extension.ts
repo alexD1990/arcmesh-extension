@@ -7,6 +7,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { ChatViewProvider } from './chatProvider';
 import { ReviewPanel, ReviewDraft } from './reviewProvider';
 import * as yaml from 'js-yaml';
+import { resolveContext } from './contextResolver';
 
 const PROJECT_MD_TEMPLATE = `# Project
 
@@ -168,9 +169,60 @@ function parseDraft(raw: string): ReviewDraft {
     return { changelog, components, decisions };
 }
 
-async function handleDiff(diff: string, systemRepoPath: string) {
+function parseChangedFiles(diff: string): string[] {
+    const files: string[] = [];
+    for (const line of diff.split('\n')) {
+        if (line.startsWith('+++ b/')) {
+            files.push(line.slice(6).trim());
+        }
+    }
+    return files;
+}
+
+function readSystemRepoSelective(systemRepoPath: string, selectedPaths: string[]): string {
+    if (!systemRepoPath || !fs.existsSync(systemRepoPath)) return '(system-repo ikke funnet)';
+    const result: string[] = [];
+
+    for (const selected of selectedPaths) {
+        const full = path.join(systemRepoPath, selected);
+        if (!fs.existsSync(full)) continue;
+
+        const stat = fs.statSync(full);
+        if (stat.isDirectory()) {
+            for (const entry of fs.readdirSync(full, { withFileTypes: true })) {
+                if (entry.isFile()) {
+                    const filePath = path.join(full, entry.name);
+                    const rel = path.relative(systemRepoPath, filePath);
+                    result.push(`### ${rel}\n${fs.readFileSync(filePath, 'utf8')}`);
+                }
+            }
+        } else {
+            const rel = path.relative(systemRepoPath, full);
+            // Spesialhåndtering for changelog.md: kun siste 10 linjer
+            if (rel === 'changelog.md') {
+                const lines = fs.readFileSync(full, 'utf8').split('\n');
+                result.push(`### ${rel}\n${lines.slice(-10).join('\n')}`);
+            } else {
+                result.push(`### ${rel}\n${fs.readFileSync(full, 'utf8')}`);
+            }
+        }
+    }
+
+    return result.join('\n\n');
+}
+
+const outputChannel = vscode.window.createOutputChannel('ContextOS');
+
+async function handleDiff(diff: string, systemRepoPath: string, config: ContextOSConfig) {
     const apiKey = vscode.workspace.getConfiguration('contextos').get<string>('apiKey');
     if (!apiKey) { vscode.window.showWarningMessage('ContextOS: Sett contextos.apiKey.'); return; }
+
+    const changedFiles = parseChangedFiles(diff);
+    const selectedPaths = resolveContext(changedFiles, config.context_map);
+
+    outputChannel.appendLine(`[ContextOS] Endrede filer: ${changedFiles.join(', ') || '(ingen)'}`);
+    outputChannel.appendLine(`[ContextOS] Valgt kontekst: ${selectedPaths.join(', ')}`);
+    outputChannel.show(true);
 
     const client = new Anthropic({ apiKey });
     const prompt = `Du er en teknisk dokumentasjonshjelper for prosjektet beskrevet i system-repoet.
@@ -192,7 +244,7 @@ Git diff:
 ${diff}
 
 Eksisterende system-repo kontekst:
-${readSystemRepo(systemRepoPath)}`;
+${readSystemRepoSelective(systemRepoPath, selectedPaths)}`;
 
     try {
         const response = await client.messages.create({
@@ -203,8 +255,6 @@ ${readSystemRepo(systemRepoPath)}`;
         const block = response.content[0];
         const raw = block.type === 'text' ? block.text : '';
         const draft = parseDraft(raw);
-
-        // Åpne review-panel
         ReviewPanel.createOrShow(systemRepoPath, draft);
     } catch (e: unknown) {
         vscode.window.showErrorMessage(`ContextOS: Feil: ${e instanceof Error ? e.message : String(e)}`);
@@ -237,7 +287,7 @@ export function activate(context: vscode.ExtensionContext) {
             const diff = fs.readFileSync(DIFF_TEMP_FILE, 'utf8');
             if (!diff.trim()) return;
             fs.unlinkSync(DIFF_TEMP_FILE);
-            await handleDiff(diff, systemRepoPath);
+            await handleDiff(diff, systemRepoPath, config);
         };
         diffWatcher.onDidCreate(onDiffChange);
         diffWatcher.onDidChange(onDiffChange);
