@@ -18,6 +18,10 @@
       {
         "command": "contextos.helloWorld",
         "title": "Hello World"
+      },
+      {
+        "command": "contextos.generateDocumentation",
+        "title": "ContextOS: Generate documentation"
       }
     ],
     "viewsContainers": {
@@ -75,3 +79,4 @@
     "js-yaml": "^4.1.1"
   }
 }
+
