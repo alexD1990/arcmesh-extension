@@ -286,6 +286,26 @@ export function activate(context: vscode.ExtensionContext) {
         systemRepoPath = ensureSystemRepo(workspaceRoot);
         const configPath = ensureConfig(workspaceRoot);
         const config = loadConfig(workspaceRoot);
+        const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+        statusBar.text = config.triggers.auto_generate ? '$(check) ContextOS: Auto' : '$(circle-slash) ContextOS: Manuell';
+        statusBar.tooltip = 'ContextOS trigger-modus';
+        statusBar.command = 'contextos.generateDocumentation';
+        statusBar.show();
+        context.subscriptions.push(statusBar);
+        if (config.triggers.on_save) {
+            const saveWatcher = vscode.workspace.createFileSystemWatcher(
+                new vscode.RelativePattern(workspaceRoot, '**/*')
+            );
+            saveWatcher.onDidChange(async (uri) => {
+                if (uri.fsPath.includes('.contextos')) return;
+                outputChannel.appendLine(`[ContextOS] Fil lagret: ${uri.fsPath} – genererer dokumentasjon...`);
+                outputChannel.show(true);
+                const diff = cp.execSync(`git -C "${workspaceRoot}" diff HEAD -- "${uri.fsPath}"`).toString();
+                if (!diff.trim()) return;
+                await handleDiff(diff, systemRepoPath, config);
+            });
+            context.subscriptions.push(saveWatcher);
+        }
         installGitHook(workspaceRoot);
 
         const serverScript = path.join(context.extensionPath, 'out', 'mcpServer.js');
@@ -296,16 +316,33 @@ export function activate(context: vscode.ExtensionContext) {
         const diffWatcher = vscode.workspace.createFileSystemWatcher(
             new vscode.RelativePattern(path.dirname(DIFF_TEMP_FILE), path.basename(DIFF_TEMP_FILE))
         );
+        const lastDiff = path.join(os.tmpdir(), 'contextos-last.diff');
+
         const onDiffChange = async () => {
             if (!fs.existsSync(DIFF_TEMP_FILE)) return;
             const diff = fs.readFileSync(DIFF_TEMP_FILE, 'utf8');
             if (!diff.trim()) return;
+            fs.writeFileSync(lastDiff, diff, 'utf8');
             fs.unlinkSync(DIFF_TEMP_FILE);
+            if (!config.triggers.auto_generate) {
+                outputChannel.appendLine('[ContextOS] auto_generate=false – hopper over auto-generering.');
+                outputChannel.show(true);
+                return;
+            }
             await handleDiff(diff, systemRepoPath, config);
         };
         diffWatcher.onDidCreate(onDiffChange);
         diffWatcher.onDidChange(onDiffChange);
         context.subscriptions.push(diffWatcher);
+
+        context.subscriptions.push(vscode.commands.registerCommand('contextos.generateDocumentation', async () => {
+            if (fs.existsSync(lastDiff)) {
+                const diff = fs.readFileSync(lastDiff, 'utf8');
+                await handleDiff(diff, systemRepoPath, config);
+            } else {
+                vscode.window.showWarningMessage('ContextOS: Ingen diff tilgjengelig. Gjør en commit først.');
+            }
+        }));
 
         vscode.window.showInformationMessage('ContextOS: MCP-server og git-hook startet.');
     }
@@ -314,23 +351,6 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, provider));
     context.subscriptions.push(vscode.commands.registerCommand('contextos.helloWorld', () => {
         vscode.window.showInformationMessage('Hello World from contextos!');
-    }));
-
-    // Manuell trigger for testing: åpne review-panel med dummy-utkast
-    context.subscriptions.push(vscode.commands.registerCommand('contextos.openReview', async () => {
-        const draftPath = path.join(os.tmpdir(), 'contextos-draft.md');
-        if (fs.existsSync(draftPath)) {
-            const raw = fs.readFileSync(draftPath, 'utf8');
-            const draft = parseDraft(raw);
-            ReviewPanel.createOrShow(systemRepoPath, draft);
-        } else {
-            // Åpne med tomt utkast for testing
-            ReviewPanel.createOrShow(systemRepoPath, {
-                changelog: '(ingen utkast funnet – skriv inn manuelt)',
-                components: '',
-                decisions: '',
-            });
-        }
     }));
 }
 
