@@ -1,9 +1,11 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import Anthropic from '@anthropic-ai/sdk';
+import { createProvider, ModelConfig } from './providers/providerFactory';
+import { Message } from './providers/aiProvider';
 import * as yaml from 'js-yaml';
 import { resolveContext } from './contextResolver';
+import type Anthropic from '@anthropic-ai/sdk';
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'contextos.chatView';
@@ -40,6 +42,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             return parsed?.context_map ?? {};
         } catch {
             return {};
+        }
+    }
+
+    private loadModelConfig(): ModelConfig {
+        if (!this.systemRepoPath) return { provider: 'anthropic', name: 'claude-sonnet-4-6' };
+        const workspaceRoot = path.resolve(this.systemRepoPath, '..', '..');
+        const configPath = path.join(workspaceRoot, '.contextos', 'config.yaml');
+        if (!fs.existsSync(configPath)) return { provider: 'anthropic', name: 'claude-sonnet-4-6' };
+        try {
+            const parsed = yaml.load(fs.readFileSync(configPath, 'utf8')) as any;
+            return parsed?.model ?? { provider: 'anthropic', name: 'claude-sonnet-4-6' };
+        } catch {
+            return { provider: 'anthropic', name: 'claude-sonnet-4-6' };
         }
     }
 
@@ -113,11 +128,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     private async handleMessage(userText: string, planningMode: boolean = false): Promise<string> {
-        const apiKey = vscode.workspace.getConfiguration('contextos').get<string>('apiKey');
-        if (!apiKey) return '⚠️ Sett contextos.apiKey i VS Code settings.';
-
         const systemRepoContent = this.readSystemRepo();
-        const client = new Anthropic({ apiKey });
+        const modelConfig = this.loadModelConfig();
+
+        let provider;
+        try {
+            provider = createProvider(modelConfig);
+        } catch (e: unknown) {
+            return e instanceof Error ? e.message : String(e);
+        }
 
         const tools: Anthropic.Tool[] = planningMode ? [{
             name: 'write_planning_doc',
@@ -133,37 +152,55 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }] : [];
 
         this.conversationHistory.push({ role: 'user', content: userText });
-        const messages = this.conversationHistory;
 
-        try {
+        const systemPrompt = `Du er en hjelpsom AI-assistent med kontekst fra prosjektets system-repo.\n\n${systemRepoContent}`;
+
+        if (planningMode && modelConfig.provider === 'anthropic') {
+            // Planning mode med tool_use – kun støttet for Anthropic foreløpig
+            const apiKey = vscode.workspace.getConfiguration('contextos').get<string>('apiKey');
+            if (!apiKey) return '⚠️ Sett contextos.apiKey i VS Code settings.';
+            const client = new (await import('@anthropic-ai/sdk')).default({ apiKey });
+            const messages = this.conversationHistory;
+
             let response = await client.messages.create({
-                model: 'claude-sonnet-4-6',
+                model: modelConfig.name,
                 max_tokens: 1024,
-                system: `Du er en hjelpsom AI-assistent med kontekst fra prosjektets system-repo.\n\n${systemRepoContent}`,
+                system: systemPrompt,
                 messages,
-                ...(tools.length > 0 ? { tools } : {}),
+                tools,
             });
 
-            // tool_use loop
             while (response.stop_reason === 'tool_use') {
                 const toolUseBlock = response.content.find(b => b.type === 'tool_use') as Anthropic.ToolUseBlock;
                 const input = toolUseBlock.input as { path: string; content: string };
                 const result = this.writePlanningDoc(input.path, input.content);
-
                 messages.push({ role: 'assistant', content: response.content });
                 messages.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseBlock.id, content: result }] });
-
                 response = await client.messages.create({
-                    model: 'claude-sonnet-4-6',
+                    model: modelConfig.name,
                     max_tokens: 1024,
-                    system: `Du er en hjelpsom AI-assistent med kontekst fra prosjektets system-repo.\n\n${systemRepoContent}`,
+                    system: systemPrompt,
                     messages,
                     tools,
                 });
             }
 
             const block = response.content[0];
-            return block.type === 'text' ? block.text : '(ingen tekst i svar)';
+            const reply = block.type === 'text' ? block.text : '(ingen tekst i svar)';
+            this.conversationHistory.push({ role: 'assistant', content: reply });
+            return reply;
+        }
+
+        // Standard sendMessage for alle providers
+        try {
+            const messages: Message[] = this.conversationHistory.map(m => ({
+                role: m.role as 'user' | 'assistant',
+                content: typeof m.content === 'string' ? m.content : '',
+            }));
+
+            const reply = await provider.sendMessage(messages, systemPrompt);
+            this.conversationHistory.push({ role: 'assistant', content: reply });
+            return reply;
         } catch (e: unknown) {
             return `Feil: ${e instanceof Error ? e.message : String(e)}`;
         }

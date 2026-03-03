@@ -50,6 +50,16 @@
           "type": "string",
           "default": "",
           "description": "Claude API key (Anthropic)"
+        },
+        "contextos.openaiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "OpenAI API key (GPT-4o)"
+        },
+        "contextos.googleApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Google API key (Gemini)"
         }
       }
     }
@@ -75,8 +85,9 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
+    "@google/generative-ai": "^0.24.1",
     "@modelcontextprotocol/sdk": "^1.27.1",
-    "js-yaml": "^4.1.1"
+    "js-yaml": "^4.1.1",
+    "openai": "^6.25.0"
   }
 }
-
