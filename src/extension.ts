@@ -285,13 +285,27 @@ export function activate(context: vscode.ExtensionContext) {
         const workspaceRoot = workspaceFolders[0].uri.fsPath;
         systemRepoPath = ensureSystemRepo(workspaceRoot);
         const configPath = ensureConfig(workspaceRoot);
-        const config = loadConfig(workspaceRoot);
+        let config = loadConfig(workspaceRoot);
         const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
         statusBar.text = config.triggers.auto_generate ? '$(check) ContextOS: Auto' : '$(circle-slash) ContextOS: Manuell';
         statusBar.tooltip = 'ContextOS trigger-modus';
         statusBar.command = 'contextos.generateDocumentation';
         statusBar.show();
         context.subscriptions.push(statusBar);
+
+        const configWatcher = vscode.workspace.createFileSystemWatcher(
+            new vscode.RelativePattern(workspaceRoot, '.contextos/config.yaml')
+        );
+        const reloadConfig = () => {
+            config = loadConfig(workspaceRoot);
+            statusBar.text = config.triggers.auto_generate ? '$(check) ContextOS: Auto' : '$(circle-slash) ContextOS: Manuell';
+            outputChannel.appendLine('[ContextOS] config.yaml reloadet.');
+            outputChannel.show(true);
+        };
+        configWatcher.onDidChange(reloadConfig);
+        configWatcher.onDidCreate(reloadConfig);
+        context.subscriptions.push(configWatcher);
+
         if (config.triggers.on_save) {
             const saveWatcher = vscode.workspace.createFileSystemWatcher(
                 new vscode.RelativePattern(workspaceRoot, '**/*')
