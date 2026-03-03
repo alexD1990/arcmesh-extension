@@ -250,6 +250,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   send.addEventListener('click', () => {
     const text = input.value.trim();
     if (!text) return;
+    console.log('[ContextOS] click – text:', text, 'planningMode:', planningMode);
     addMsg(text, 'user');
     input.value = '';
     const thinking = addMsg('Tenker...', 'assistant thinking');
