@@ -35,6 +35,41 @@ const ARCHITECTURE_MD_TEMPLATE = `# Architecture
 <!-- Dataflyt gjennom systemet -->
 `;
 
+const STANDARDS_MD_TEMPLATE = `# Documentation Standards
+
+**Dato:** 2026-03-04
+**Status:** Godkjent
+
+## Prioriteringsrekkefølge ved konflikt
+
+1. \`decisions/\` – eksplisitt beslutning trumfer alltid
+2. \`architecture.md\` – teknisk presisjon trumfer retning
+3. \`components/\` – modulspesifikk trumfer generell
+4. \`project.md\` – overordnet retning
+5. \`changelog.md\` – historisk logg, ikke normativ
+
+## Skriveregler
+
+- Ingenting overskrives – all historikk bevares
+- Datostemp alltid – format YYYY-MM-DD
+- En beslutning = én fil i \`decisions/\`
+- En komponent = én fil i \`components/\` med akkumulerte seksjoner
+
+## Arbeidsflyt
+
+### Før implementasjon
+1. Skriv beslutning i \`decisions/YYYY-MM-DD-slug.md\`
+
+### Etter implementasjon
+2. Legg til entry i \`changelog.md\`
+3. Oppdater \`components/\` hvis modulansvar endret seg
+4. Oppdater \`architecture.md\` hvis systemdesign endret seg
+
+### Regler
+- \`decisions/\` skrives alltid før kode
+- \`changelog.md\` skrives alltid etter kode
+`;
+
 function ensureSystemRepo(workspaceRoot: string) {
     const systemRepoPath = path.join(workspaceRoot, '.contextos', 'system-repo');
     const dirs = [systemRepoPath, path.join(systemRepoPath, 'decisions'), path.join(systemRepoPath, 'components')];
@@ -45,6 +80,8 @@ function ensureSystemRepo(workspaceRoot: string) {
     if (!fs.existsSync(projectMd)) fs.writeFileSync(projectMd, PROJECT_MD_TEMPLATE, 'utf8');
     const architectureMd = path.join(systemRepoPath, 'architecture.md');
     if (!fs.existsSync(architectureMd)) fs.writeFileSync(architectureMd, ARCHITECTURE_MD_TEMPLATE, 'utf8');
+    const standardsMd = path.join(systemRepoPath, 'STANDARDS.md');
+    if (!fs.existsSync(standardsMd)) fs.writeFileSync(standardsMd, STANDARDS_MD_TEMPLATE, 'utf8');
     return systemRepoPath;
 }
 
@@ -154,6 +191,14 @@ function installGitHook(workspaceRoot: string) {
     ].join('\n') + '\n';
     fs.writeFileSync(hookPath, hookContent, { encoding: 'utf8', mode: 0o755 });
     console.log(`[ContextOS] post-commit hook installert: ${hookPath}`);
+    const cmdHookPath = path.join(hooksDir, 'post-commit.cmd');
+    const cmdHookContent = [
+        '@echo off',
+        'REM ContextOS post-commit hook (Windows) – autogenerert',
+        'git diff HEAD~1 HEAD > "%TEMP%\\contextos-post-commit.diff" 2>nul || git show HEAD > "%TEMP%\\contextos-post-commit.diff" 2>nul',
+    ].join('\r\n') + '\r\n';
+    fs.writeFileSync(cmdHookPath, cmdHookContent, { encoding: 'utf8' });
+    console.log(`[ContextOS] post-commit.cmd hook installert: ${cmdHookPath}`);
 }
 
 function readSystemRepo(systemRepoPath: string): string {
