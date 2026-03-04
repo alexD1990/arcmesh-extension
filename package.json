@@ -1,8 +1,9 @@
 {
   "name": "contextos",
   "displayName": "contextos",
-  "description": "",
-  "version": "0.0.1",
+  "description": "AI-assisted project documentation for developers",
+  "version": "0.1.0",
+  "publisher": "contextos",
   "engines": {
     "vscode": "^1.109.0"
   },

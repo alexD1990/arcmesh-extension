@@ -104,12 +104,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 }
             } else {
                 const rel = path.relative(this.systemRepoPath, full);
-                if (rel === 'changelog.md') {
-                    const lines = fs.readFileSync(full, 'utf8').split('\n');
-                    result.push(`### ${rel}\n${lines.slice(-10).join('\n')}`);
-                } else {
-                    result.push(`### ${rel}\n${fs.readFileSync(full, 'utf8')}`);
-                }
+                result.push(`### ${rel}\n${fs.readFileSync(full, 'utf8')}`);
             }
         }
         return result.join('\n\n');
@@ -125,20 +120,47 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         return result;
     }
 
-    private writePlanningDoc(filePath: string, content: string): string {
-        const normalized = filePath.replace(/\\/g, '/');
-        const allowed = normalized.startsWith('docs/') || normalized.startsWith('decisions/');
-        if (!allowed) {
-            return `ERROR: kan kun skrive til docs/ eller decisions/. Fikk: ${filePath}`;
-        }
-        const full = path.resolve(this.systemRepoPath, filePath);
-        if (!full.startsWith(path.resolve(this.systemRepoPath))) {
-            return 'ERROR: Path traversal ikke tillatt.';
-        }
-        fs.mkdirSync(path.dirname(full), { recursive: true });
-        fs.writeFileSync(full, content, 'utf8');
-        return `OK: skrev ${filePath}`;
+    private readStandardsMd(): string {
+        const full = path.join(this.systemRepoPath, 'STANDARDS.md');
+        if (!fs.existsSync(full)) return '';
+        return `### STANDARDS.md\n${fs.readFileSync(full, 'utf8')}`;
     }
+
+    private writePlanningDoc(filePath: string, content: string): string {
+    const normalized = filePath.replace(/\\/g, '/');
+    const allowed = normalized.startsWith('docs/') || normalized.startsWith('decisions/');
+    if (!allowed) {
+        return `ERROR: kan kun skrive til docs/ eller decisions/. Fikk: ${filePath}`;
+    }
+    const full = path.resolve(this.systemRepoPath, filePath);
+    if (!full.startsWith(path.resolve(this.systemRepoPath))) {
+        return 'ERROR: Path traversal ikke tillatt.';
+    }
+
+    if (normalized.startsWith('decisions/')) {
+        const today = new Date().toISOString().slice(0, 10);
+        const hasDate = content.includes('**Dato:**');
+        const hasStatus = content.includes('**Status:**');
+        const hasDecision = content.includes('## Beslutning');
+        const hasBegrunnelse = content.includes('## Begrunnelse');
+        const hasAlternativer = content.includes('## Alternativer vurdert');
+
+        let header = '';
+        if (!hasDate) header += `**Dato:** ${today}\n`;
+        if (!hasStatus) header += `**Status:** Foreslått\n`;
+        if (header) content = header + '\n' + content;
+
+        let footer = '';
+        if (!hasDecision) footer += `\n## Beslutning\n<!-- Hva skal gjøres -->\n`;
+        if (!hasBegrunnelse) footer += `\n## Begrunnelse\n<!-- Hvorfor -->\n`;
+        if (!hasAlternativer) footer += `\n## Alternativer vurdert\n<!-- Hva ble vurdert -->\n`;
+        if (footer) content = content + footer;
+    }
+
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, content, 'utf8');
+    return `OK: skrev ${filePath}`;
+}
 
     private async handleMessage(userText: string, planningMode: boolean = false): Promise<void> {
         this.postAction('Leser system-repo...');
@@ -166,7 +188,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         this.conversationHistory.push({ role: 'user', content: userText });
 
-        const systemPrompt = `Du er en hjelpsom AI-assistent med kontekst fra prosjektets system-repo.\n\n${systemRepoContent}`;
+        const standardsContent = this.readStandardsMd();
+        const systemPrompt = `Du er en hjelpsom AI-assistent med kontekst fra prosjektets system-repo.\n\n${standardsContent ? standardsContent + '\n\n---\n\n' : ''}${systemRepoContent}`;
 
         const client = new (await import('@anthropic-ai/sdk')).default({ apiKey });
 
