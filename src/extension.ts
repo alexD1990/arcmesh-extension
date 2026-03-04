@@ -277,7 +277,7 @@ ${readSystemRepoSelective(systemRepoPath, selectedPaths)}`;
 
 let mcpProcess: cp.ChildProcess | undefined;
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
     console.log('ContextOS extension is now active!');
     let systemRepoPath = '';
     const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -285,6 +285,20 @@ export function activate(context: vscode.ExtensionContext) {
         const workspaceRoot = workspaceFolders[0].uri.fsPath;
         systemRepoPath = ensureSystemRepo(workspaceRoot);
         const configPath = ensureConfig(workspaceRoot);
+        const existingApiKey = vscode.workspace.getConfiguration('contextos').get<string>('apiKey');
+        if (!existingApiKey) {
+            const input = await vscode.window.showInputBox({
+                prompt: 'Velkommen til ContextOS! Lim inn din Anthropic API-nøkkel for å komme i gang.',
+                password: true,
+                ignoreFocusOut: true
+            });
+            if (input) {
+                await vscode.workspace.getConfiguration('contextos').update(
+                    'apiKey', input, vscode.ConfigurationTarget.Global
+                );
+                vscode.window.showInformationMessage('ContextOS: API-nøkkel lagret. Klar til bruk!');
+            }
+        }
         let config = loadConfig(workspaceRoot);
         const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
         statusBar.text = config.triggers.auto_generate ? '$(check) ContextOS: Auto' : '$(circle-slash) ContextOS: Manuell';
