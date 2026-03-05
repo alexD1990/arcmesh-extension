@@ -22,6 +22,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this._webviewView = webviewView;
         webviewView.webview.options = { enableScripts: true };
         webviewView.webview.html = this.getHtml();
+        const initialModel = this.loadModelConfig();
+        webviewView.webview.postMessage({ command: 'modelUpdated', name: initialModel.name });
 
         webviewView.webview.onDidReceiveMessage(async (msg) => {
             if (msg.command === 'send') {
@@ -30,6 +32,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             if (msg.command === 'newChat') {
                 this.conversationHistory = [];
                 webviewView.webview.postMessage({ command: 'cleared' });
+            }
+            if (msg.command === 'updateModel') {
+                this.updateModelInConfig(msg.provider, msg.name);
+                webviewView.webview.postMessage({ command: 'modelUpdated', name: msg.name });
             }
         });
     }
@@ -69,6 +75,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             return parsed?.model ?? { provider: 'anthropic', name: 'claude-sonnet-4-6' };
         } catch {
             return { provider: 'anthropic', name: 'claude-sonnet-4-6' };
+        }
+    }
+
+    private updateModelInConfig(provider: string, name: string): void {
+        if (!this.systemRepoPath) return;
+        const workspaceRoot = path.resolve(this.systemRepoPath, '..', '..');
+        const configPath = path.join(workspaceRoot, '.contextos', 'config.yaml');
+        if (!fs.existsSync(configPath)) return;
+        try {
+            const parsed = yaml.load(fs.readFileSync(configPath, 'utf8')) as any;
+            if (!parsed) return;
+            parsed.model = { provider, name };
+            fs.writeFileSync(configPath, yaml.dump(parsed), 'utf8');
+        } catch (e) {
+            console.error('[ContextOS] Feil ved oppdatering av modell i config.yaml:', e);
         }
     }
 
@@ -297,15 +318,34 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   .bubble li { margin: 2px 0; }
   .cursor::after { content: '▌'; animation: blink 0.8s step-end infinite; color: #5af; }
   @keyframes blink { 50% { opacity: 0; } }
-  #input-row { display: flex; gap: 6px; padding: 8px 10px 10px; border-top: 1px solid #2a2a35; background: #1a1a1f; align-items: center; flex-wrap: wrap; }
-  #input { flex: 1; background: #252530; color: #e0e0e0; border: 1px solid #3a3a48; padding: 8px 10px; border-radius: 8px; font-size: 13px; outline: none; resize: none; min-height: 36px; max-height: 150px; overflow-y: auto; line-height: 1.4; }
-  #input:focus { border-color: #2f6feb; }
+
+  #input-row { display: flex; flex-direction: column; padding: 8px 10px 10px; border-top: 1px solid #2a2a35; background: #1a1a1f; gap: 6px; }
+  #input-box { background: #252530; border: 1px solid #3a3a48; border-radius: 12px; display: flex; flex-direction: column; padding: 8px 10px 6px; gap: 4px; }
+  #input-box:focus-within { border-color: #2f6feb; }
+  #input { background: transparent; color: #e0e0e0; border: none; padding: 0; font-size: 13px; outline: none; resize: none; min-height: 72px; max-height: 200px; overflow-y: auto; line-height: 1.4; width: 100%; }
+  #input-bottom { display: flex; align-items: center; justify-content: space-between; }
+  #input-left { display: flex; gap: 6px; }
+  #input-right { display: flex; gap: 6px; align-items: center; }
+  #model-btn { background: #2a2a38; color: #ccc; border: 1px solid #3a3a48; padding: 4px 10px; border-radius: 8px; cursor: pointer; font-size: 12px; display: flex; align-items: center; gap: 4px; }
+  #model-btn:hover { background: #333344; color: #fff; }
+  #send { background: #2f6feb; color: #fff; border: none; padding: 5px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; display: flex; align-items: center; justify-content: center; }
+  #send:hover { background: #3a7fff; }
+  #send:disabled { opacity: 0.4; cursor: default; }
   button { background: #2f6feb; color: #fff; border: none; padding: 6px 12px; border-radius: 8px; cursor: pointer; font-size: 12px; white-space: nowrap; }
   button:hover { background: #3a7fff; }
   button:disabled { opacity: 0.4; cursor: default; }
   button.secondary { background: #2a2a38; color: #aaa; border: 1px solid #3a3a48; }
   button.secondary:hover { background: #333344; color: #ddd; }
   button.secondary.active { background: #2f6feb; color: #fff; border-color: #2f6feb; }
+  #model-popup { display: none; position: absolute; bottom: 120px; left: 10px; background: #1e1e2a; border: 1px solid #333348; border-radius: 12px; min-width: 220px; z-index: 100; overflow: hidden; box-shadow: 0 4px 24px rgba(0,0,0,0.5); }
+  #model-popup.visible { display: block; }
+  .model-group-label { padding: 8px 14px 4px; font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 0.05em; }
+  .model-option { padding: 8px 14px; cursor: pointer; color: #ccc; font-size: 13px; display: flex; align-items: center; justify-content: space-between; }
+  .model-option:hover { background: #252535; color: #fff; }
+  .model-option.selected { color: #fff; }
+  .model-option .check { color: #4caf7d; font-size: 14px; }
+  .model-divider { height: 1px; background: #2a2a38; margin: 4px 0; }
+
   #messages::-webkit-scrollbar { width: 4px; }
   #messages::-webkit-scrollbar-track { background: transparent; }
   #messages::-webkit-scrollbar-thumb { background: #3a3a4a; border-radius: 4px; }
@@ -313,12 +353,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
 <div id="messages"></div>
+
+<div id="model-popup"></div>
 <div id="input-row">
-  <textarea id="input" placeholder="Spør om prosjektet..." rows="1"></textarea>
-  <button id="send">Send</button>
-  <button id="planning-toggle" class="secondary">Plan: AV</button>
-  <button id="new-chat" class="secondary">Ny chat</button>
+  <div id="input-box">
+    <textarea id="input" placeholder="Spør om prosjektet..." rows="3"></textarea>
+    <div id="input-bottom">
+      <div id="input-left">
+        <button id="planning-toggle" class="secondary">Plan: AV</button>
+        <button id="new-chat" class="secondary">Ny chat</button>
+      </div>
+      <div id="input-right">
+        <button id="model-btn">Sonnet 4.6 ▾</button>
+        <button id="send">↑</button>
+      </div>
+    </div>
+  </div>
 </div>
+
 <script>
   const vscode = acquireVsCodeApi();
   const messagesEl = document.getElementById('messages');
@@ -428,6 +480,59 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.classList.toggle('active', planningMode);
   });
 
+  const MODELS = [
+    { provider: 'anthropic', label: 'Sonnet 4.6', name: 'claude-sonnet-4-6' },
+    { provider: 'anthropic', label: 'Haiku 4.5', name: 'claude-haiku-4-5-20251001' },
+    { provider: 'openai',    label: 'GPT-4o', name: 'gpt-4o' },
+    { provider: 'openai',    label: 'GPT-4o mini', name: 'gpt-4o-mini' },
+    { provider: 'google',    label: 'Gemini 2.0 Flash', name: 'gemini-2.0-flash' },
+    { provider: 'google',    label: 'Gemini 1.5 Pro', name: 'gemini-1.5-pro' },
+  ];
+
+  let selectedModel = MODELS[0];
+
+  function buildModelPopup() {
+    const popup = document.getElementById('model-popup');
+    popup.innerHTML = '';
+    const groups = ['anthropic', 'openai', 'google'];
+    const groupLabels = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google' };
+    groups.forEach((group, gi) => {
+      const label = document.createElement('div');
+      label.className = 'model-group-label';
+      label.textContent = groupLabels[group];
+      popup.appendChild(label);
+      MODELS.filter(m => m.provider === group).forEach(m => {
+        const opt = document.createElement('div');
+        opt.className = 'model-option' + (m.name === selectedModel.name ? ' selected' : '');
+        opt.innerHTML = '<span>' + m.label + '</span>' + (m.name === selectedModel.name ? '<span class="check">✓</span>' : '');
+        opt.addEventListener('click', () => {
+          selectedModel = m;
+          document.getElementById('model-btn').textContent = m.label + ' \u25be';
+          vscode.postMessage({ command: 'updateModel', provider: m.provider, name: m.name });
+          popup.classList.remove('visible');
+          buildModelPopup();
+        });
+        popup.appendChild(opt);
+      });
+      if (gi < groups.length - 1) {
+        const div = document.createElement('div');
+        div.className = 'model-divider';
+        popup.appendChild(div);
+      }
+    });
+  }
+
+  buildModelPopup();
+
+  document.getElementById('model-btn').addEventListener('click', function(e) {
+    e.stopPropagation();
+    document.getElementById('model-popup').classList.toggle('visible');
+  });
+
+  document.addEventListener('click', () => {
+    document.getElementById('model-popup').classList.remove('visible');
+  });
+
   document.getElementById('new-chat').addEventListener('click', () => {
     vscode.postMessage({ command: 'newChat' });
   });
@@ -470,6 +575,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       activeText = '';
       activeSteps = [];
     }
+
+    if (msg.command === 'modelUpdated') {
+      const m = MODELS.find(x => x.name === msg.name);
+      if (m) {
+        selectedModel = m;
+        document.getElementById('model-btn').textContent = m.label + ' \u25be';
+        buildModelPopup();
+      }
+    }
+
   });
 </script>
 </body>
