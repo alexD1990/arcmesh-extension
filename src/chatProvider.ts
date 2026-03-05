@@ -298,7 +298,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   .cursor::after { content: '▌'; animation: blink 0.8s step-end infinite; color: #5af; }
   @keyframes blink { 50% { opacity: 0; } }
   #input-row { display: flex; gap: 6px; padding: 8px 10px 10px; border-top: 1px solid #2a2a35; background: #1a1a1f; align-items: center; flex-wrap: wrap; }
-  #input { flex: 1; min-width: 100px; background: #252530; color: #e0e0e0; border: 1px solid #3a3a48; padding: 6px 10px; border-radius: 8px; font-size: 13px; outline: none; }
+  #input { flex: 1; background: #252530; color: #e0e0e0; border: 1px solid #3a3a48; padding: 8px 10px; border-radius: 8px; font-size: 13px; outline: none; resize: none; min-height: 36px; max-height: 150px; overflow-y: auto; line-height: 1.4; }
   #input:focus { border-color: #2f6feb; }
   button { background: #2f6feb; color: #fff; border: none; padding: 6px 12px; border-radius: 8px; cursor: pointer; font-size: 12px; white-space: nowrap; }
   button:hover { background: #3a7fff; }
@@ -314,7 +314,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <body>
 <div id="messages"></div>
 <div id="input-row">
-  <input id="input" type="text" placeholder="Spør om prosjektet..." />
+  <textarea id="input" placeholder="Spør om prosjektet..." rows="1"></textarea>
   <button id="send">Send</button>
   <button id="planning-toggle" class="secondary">Plan: AV</button>
   <button id="new-chat" class="secondary">Ny chat</button>
@@ -419,7 +419,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     vscode.postMessage({ command: 'send', text, planningMode });
   });
 
-  input.addEventListener('keydown', e => { if (e.key === 'Enter') sendBtn.click(); });
+  input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendBtn.click(); } });
+  input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = input.scrollHeight + 'px'; });
 
   document.getElementById('planning-toggle').addEventListener('click', function() {
     planningMode = !planningMode;
