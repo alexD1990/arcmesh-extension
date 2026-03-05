@@ -281,7 +281,6 @@ async function handleDiff(diff: string, systemRepoPath: string, config: ContextO
 
     outputChannel.appendLine(`[ContextOS] Endrede filer: ${changedFiles.join(', ') || '(ingen)'}`);
     outputChannel.appendLine(`[ContextOS] Valgt kontekst: ${selectedPaths.join(', ')}`);
-    outputChannel.show(true);
 
     const client = new Anthropic({ apiKey });
     const prompt = `Du er en teknisk dokumentasjonshjelper for prosjektet beskrevet i system-repoet.
@@ -359,7 +358,6 @@ export async function activate(context: vscode.ExtensionContext) {
             config = loadConfig(workspaceRoot);
             statusBar.text = config.triggers.auto_generate ? '$(check) ContextOS: Auto' : '$(circle-slash) ContextOS: Manuell';
             outputChannel.appendLine('[ContextOS] config.yaml reloadet.');
-            outputChannel.show(true);
         };
         configWatcher.onDidChange(reloadConfig);
         configWatcher.onDidCreate(reloadConfig);
@@ -372,7 +370,6 @@ export async function activate(context: vscode.ExtensionContext) {
             saveWatcher.onDidChange(async (uri) => {
                 if (uri.fsPath.includes('.contextos')) return;
                 outputChannel.appendLine(`[ContextOS] Fil lagret: ${uri.fsPath} – genererer dokumentasjon...`);
-                outputChannel.show(true);
                 const diff = cp.execSync(`git -C "${workspaceRoot}" diff HEAD -- "${uri.fsPath}"`).toString();
                 if (!diff.trim()) return;
                 await handleDiff(diff, systemRepoPath, config);
@@ -399,7 +396,6 @@ export async function activate(context: vscode.ExtensionContext) {
             fs.unlinkSync(DIFF_TEMP_FILE);
             if (!config.triggers.auto_generate) {
                 outputChannel.appendLine('[ContextOS] auto_generate=false – hopper over auto-generering.');
-                outputChannel.show(true);
                 return;
             }
             await handleDiff(diff, systemRepoPath, config);
