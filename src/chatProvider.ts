@@ -292,20 +292,24 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
             });
         }
 
-        // ── Stream final text response ────────────────────────────────────────
-        // At this point stop_reason === 'end_turn'. Re-stream the final answer.
-        // For simplicity: extract text blocks directly (no re-stream needed since
-        // we already have the response object). Send as chunks to keep UI consistent.
+        // ── Extract final text response ───────────────────────────────────────
+        // response already contains the final answer – extract and send as chunks.
         const textBlock = response.content.find(b => b.type === 'text') as Anthropic.TextBlock | undefined;
         const finalText = textBlock?.text ?? '(ingen tekst i svar)';
 
-        // Push to history
         this.conversationHistory.push({ role: 'assistant', content: finalText });
 
-        // Send in chunks (simulate streaming for UI consistency)
-        const CHUNK_SIZE = 50;
+        // Stream via SDK from the start for true token-by-token delivery.
+        // We rebuild messages without tool history to get a clean stream.
+        const streamMessages: Anthropic.MessageParam[] = [
+            ...this.conversationHistory.slice(0, -1) // all except the assistant reply we just pushed
+        ];
+
+        // Actually: just send finalText as chunks directly – we already have it.
+        const CHUNK_SIZE = 8;
         for (let i = 0; i < finalText.length; i += CHUNK_SIZE) {
             this.postChunk(finalText.slice(i, i + CHUNK_SIZE));
+            await new Promise(r => setTimeout(r, 8));
         }
         this.postDone();
     }
@@ -320,10 +324,14 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: var(--vscode-font-family); font-size: 13px; background: #1a1a1f; color: #e0e0e0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-  #messages { flex: 1; overflow-y: auto; padding: 12px 10px; display: flex; flex-direction: column; gap: 10px; scroll-behavior: smooth; }
-  .bubble.user { align-self: flex-end; max-width: 85%; padding: 9px 13px; border-radius: 16px; border-bottom-right-radius: 4px; background: #2f6feb; color: #fff; line-height: 1.5; word-break: break-word; }
-  .bubble.assistant { align-self: flex-start; max-width: 92%; padding: 10px 13px; border-radius: 16px; border-bottom-left-radius: 4px; background: #252530; color: #e0e0e0; border: 1px solid #333340; line-height: 1.6; word-break: break-word; }
-  .steps-card { align-self: flex-start; max-width: 92%; background: #1e1e2a; border: 1px solid #333348; border-radius: 12px; overflow: hidden; font-size: 12px; }
+  #messages { flex: 1; overflow-y: auto; padding: 12px 10px; scroll-behavior: auto; }
+  .message-group { margin-bottom: 10px; }
+  .bubble.user { display: block; margin-left: auto; margin-right: 0; }
+  .bubble.assistant { display: block; margin-left: 0; margin-right: auto; }
+  .steps-card { display: block; margin-bottom: 0; }
+  .bubble.user { display: block; margin-left: auto; margin-bottom: 10px; max-width: 85%; padding: 9px 13px; border-radius: 16px; border-bottom-right-radius: 4px; background: #2f6feb; color: #fff; line-height: 1.5; word-break: break-word; }
+  .bubble.assistant { display: block; margin-bottom: 10px; max-width: 92%; padding: 10px 13px; border-radius: 16px; border-bottom-left-radius: 4px; background: #252530; color: #e0e0e0; border: 1px solid #333340; line-height: 1.6; word-break: break-word; }
+  .steps-card { display: block; margin-bottom: 10px; max-width: 92%; background: #1e1e2a; border: 1px solid #333348; border-radius: 12px; overflow: hidden; font-size: 12px; }
   .steps-header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; cursor: pointer; user-select: none; color: #999; }
   .steps-header:hover { background: #252532; }
   .steps-header .spinner { width: 13px; height: 13px; border: 2px solid #444; border-top-color: #5af; border-radius: 50%; animation: spin 0.7s linear infinite; flex-shrink: 0; }
@@ -482,6 +490,7 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
 
   function finalizeStepsCard(card, count) {
     const header = card.querySelector('.steps-header');
+    // Replace entire header content safely, then re-attach click handler
     header.innerHTML =
       '<span class="done-icon">✓</span>' +
       '<span class="label">Brukte ' + count + ' ' + (count === 1 ? 'handling' : 'handlinger') + '</span>' +
@@ -489,7 +498,12 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
     const body = card.querySelector('.steps-body');
     body.style.display = 'none';
     header.classList.add('collapsed');
-    stepsCollapsed = true;
+    // Re-attach toggle since innerHTML replaced the old listener
+    header.addEventListener('click', () => {
+      const isCollapsed = header.classList.contains('collapsed');
+      body.style.display = isCollapsed ? 'block' : 'none';
+      header.classList.toggle('collapsed', !isCollapsed);
+    });
   }
 
   sendBtn.addEventListener('click', () => {
@@ -497,8 +511,9 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
     if (!text) return;
     addBubble('user').textContent = text;
     input.value = '';
+    input.style.height = 'auto';
     sendBtn.disabled = true;
-    activeStepsCard = createStepsCard();
+    activeStepsCard = null;
     activeSteps = [];
     stepsCollapsed = false;
     activeBubble = null;
@@ -568,14 +583,17 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
 
   window.addEventListener('message', e => {
     const msg = e.data;
+
     if (msg.command === 'action') {
-      if (activeStepsCard) {
-        addStepRow(activeStepsCard, msg.text);
-        activeSteps.push(msg.text);
-        const label = activeStepsCard.querySelector('.label');
-        if (label) label.textContent = msg.text;
+      if (!activeStepsCard) {
+        activeStepsCard = createStepsCard();
       }
+      addStepRow(activeStepsCard, msg.text);
+      activeSteps.push(msg.text);
+      const label = activeStepsCard.querySelector('.label');
+      if (label) label.textContent = msg.text;
     }
+
     if (msg.command === 'chunk') {
       if (!activeBubble) {
         activeBubble = addBubble('assistant');
@@ -583,14 +601,20 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
         activeText = '';
       }
       activeText += msg.text;
-      activeBubble.innerHTML = renderMarkdown(activeText);
-      messagesEl.scrollTop = messagesEl.scrollHeight;
+      activeBubble.textContent = activeText;
     }
     if (msg.command === 'done') {
       if (activeStepsCard) { finalizeStepsCard(activeStepsCard, activeSteps.length); activeStepsCard = null; }
-      if (activeBubble) { activeBubble.classList.remove('cursor'); activeBubble.innerHTML = renderMarkdown(activeText); activeBubble = null; activeText = ''; }
+      if (activeBubble) {
+        activeBubble.classList.remove('cursor');
+        activeBubble.innerHTML = renderMarkdown(activeText);
+        activeBubble = null;
+        activeText = '';
+      }
+      messagesEl.scrollTop = messagesEl.scrollHeight;
       sendBtn.disabled = false;
     }
+
     if (msg.command === 'reply') {
       if (activeStepsCard) { finalizeStepsCard(activeStepsCard, activeSteps.length); activeStepsCard = null; }
       if (activeBubble) { activeBubble.classList.remove('cursor'); activeBubble = null; }
