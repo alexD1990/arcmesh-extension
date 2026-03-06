@@ -93,9 +93,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private readSystemRepo(changedFiles?: string[]): string {
+    private readSystemRepo(changedFiles?: string[]): { content: string; count: number } {
         if (!this.systemRepoPath || !fs.existsSync(this.systemRepoPath)) {
-            return '(system-repo ikke funnet)';
+            return { content: '(system-repo ikke funnet)', count: 0 };
         }
 
         let selectedPaths: string[];
@@ -104,13 +104,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             selectedPaths = resolveContext(changedFiles, contextMap);
         } else {
             const files = this.collectFiles(this.systemRepoPath);
-            return files.map(f => {
+            const content = files.map(f => {
                 const rel = path.relative(this.systemRepoPath, f);
                 return `### ${rel}\n${fs.readFileSync(f, 'utf8')}`;
             }).join('\n\n');
+            return { content, count: files.length };
         }
 
         const result: string[] = [];
+        let count = 0;
         for (const selected of selectedPaths) {
             const full = path.join(this.systemRepoPath, selected);
             if (!fs.existsSync(full)) continue;
@@ -121,14 +123,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                         const filePath = path.join(full, entry.name);
                         const rel = path.relative(this.systemRepoPath, filePath);
                         result.push(`### ${rel}\n${fs.readFileSync(filePath, 'utf8')}`);
+                        count++;
                     }
                 }
             } else {
                 const rel = path.relative(this.systemRepoPath, full);
                 result.push(`### ${rel}\n${fs.readFileSync(full, 'utf8')}`);
+                count++;
             }
         }
-        return result.join('\n\n');
+        return { content: result.join('\n\n'), count };
     }
 
     private collectFiles(dir: string): string[] {
@@ -145,7 +149,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         return path.resolve(this.systemRepoPath, '..', '..');
     }
 
-    private readSourceFiles(): string {
+    private readSourceFiles(): { content: string; count: number } {
         const workspaceRoot = this.getWorkspaceRoot();
         const EXCLUDED = new Set(['.contextos', '.git', 'node_modules', 'out', 'dist', '.next', '__pycache__']);
         const MAX_FILE_SIZE = 100 * 1024; // 100KB per fil
@@ -171,7 +175,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         };
 
         collect(workspaceRoot);
-        return result.join('\n\n');
+        return { content: result.join('\n\n'), count: result.length };
     }
 
     private readStandardsMd(): string {
@@ -217,9 +221,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 }
 
     private async handleMessage(userText: string, planningMode: boolean = false): Promise<void> {
-        this.postAction('Leser system-repo og kildekode...');
-        const systemRepoContent = this.readSystemRepo();
-        const sourceFilesContent = this.readSourceFiles();
+        this.postAction('Leser system-repo...');
+        const { content: systemRepoContent, count: sysCount } = this.readSystemRepo();
+        this.postAction(`Leser system-repo... (${sysCount} filer)`);
+
+        this.postAction('Leser kildekode...');
+        const { content: sourceFilesContent, count: srcCount } = this.readSourceFiles();
+        this.postAction(`Leser kildekode... (${srcCount} filer)`);
+
         const modelConfig = this.loadModelConfig();
 
         const apiKey = vscode.workspace.getConfiguration('contextos').get<string>('apiKey');
@@ -288,7 +297,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
 
         // Standard modus: streaming
-        this.postAction('Kontakter AI...');
+        this.postAction(`Kontakter AI (${modelConfig.name})...`);
         try {
             let fullReply = '';
             const stream = await client.messages.stream({
