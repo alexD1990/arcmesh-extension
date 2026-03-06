@@ -141,6 +141,39 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         return result;
     }
 
+    private getWorkspaceRoot(): string {
+        return path.resolve(this.systemRepoPath, '..', '..');
+    }
+
+    private readSourceFiles(): string {
+        const workspaceRoot = this.getWorkspaceRoot();
+        const EXCLUDED = new Set(['.contextos', '.git', 'node_modules', 'out', 'dist', '.next', '__pycache__']);
+        const MAX_FILE_SIZE = 100 * 1024; // 100KB per fil
+        const result: string[] = [];
+
+        const collect = (dir: string) => {
+            let entries: fs.Dirent[];
+            try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+            for (const entry of entries) {
+                if (EXCLUDED.has(entry.name)) continue;
+                const full = path.join(dir, entry.name);
+                if (entry.isDirectory()) {
+                    collect(full);
+                } else if (entry.isFile()) {
+                    try {
+                        const stat = fs.statSync(full);
+                        if (stat.size > MAX_FILE_SIZE) continue;
+                        const rel = path.relative(workspaceRoot, full);
+                        result.push(`### ${rel}\n${fs.readFileSync(full, 'utf8')}`);
+                    } catch { /* skip unreadable */ }
+                }
+            }
+        };
+
+        collect(workspaceRoot);
+        return result.join('\n\n');
+    }
+
     private readStandardsMd(): string {
         const full = path.join(this.systemRepoPath, 'STANDARDS.md');
         if (!fs.existsSync(full)) return '';
@@ -184,8 +217,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 }
 
     private async handleMessage(userText: string, planningMode: boolean = false): Promise<void> {
-        this.postAction('Leser system-repo...');
+        this.postAction('Leser system-repo og kildekode...');
         const systemRepoContent = this.readSystemRepo();
+        const sourceFilesContent = this.readSourceFiles();
         const modelConfig = this.loadModelConfig();
 
         const apiKey = vscode.workspace.getConfiguration('contextos').get<string>('apiKey');
@@ -210,7 +244,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.conversationHistory.push({ role: 'user', content: userText });
 
         const standardsContent = this.readStandardsMd();
-        const systemPrompt = `Du er en hjelpsom AI-assistent med kontekst fra prosjektets system-repo.\n\n${standardsContent ? standardsContent + '\n\n---\n\n' : ''}${systemRepoContent}`;
+        const systemPrompt = `Du er en hjelpsom AI-assistent med kontekst fra prosjektets system-repo og kildekode.\n\n${standardsContent ? standardsContent + '\n\n---\n\n' : ''}${systemRepoContent}${sourceFilesContent ? '\n\n---\n\n## Kildekode\n\n' + sourceFilesContent : ''}`;
 
         const client = new (await import('@anthropic-ai/sdk')).default({ apiKey });
 
