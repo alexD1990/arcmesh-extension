@@ -1,10 +1,8 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { createProvider, ModelConfig } from './providers/providerFactory';
-import { Message } from './providers/aiProvider';
+import { ModelConfig } from './providers/providerFactory';
 import * as yaml from 'js-yaml';
-import { resolveContext } from './contextResolver';
 import type Anthropic from '@anthropic-ai/sdk';
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
@@ -25,7 +23,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const initialModel = this.loadModelConfig();
         webviewView.webview.postMessage({ command: 'modelUpdated', name: initialModel.name });
 
-        webviewView.webview.onDidReceiveMessage(async (msg) => {
+        webviewView.webview.onDidReceiveMessage(async (msg: any) => {
             if (msg.command === 'send') {
                 await this.handleMessage(msg.text, msg.planningMode === true);
             }
@@ -50,19 +48,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     private postDone() {
         this._webviewView?.webview.postMessage({ command: 'done' });
-    }
-
-    private loadContextMap(): Record<string, string> {
-        if (!this.systemRepoPath) return {};
-        const workspaceRoot = path.resolve(this.systemRepoPath, '..', '..');
-        const configPath = path.join(workspaceRoot, '.contextos', 'config.yaml');
-        if (!fs.existsSync(configPath)) return {};
-        try {
-            const parsed = yaml.load(fs.readFileSync(configPath, 'utf8')) as any;
-            return parsed?.context_map ?? {};
-        } catch {
-            return {};
-        }
     }
 
     private loadModelConfig(): ModelConfig {
@@ -93,142 +78,191 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private readSystemRepo(changedFiles?: string[]): { content: string; count: number } {
-        if (!this.systemRepoPath || !fs.existsSync(this.systemRepoPath)) {
-            return { content: '(system-repo ikke funnet)', count: 0 };
-        }
+    // ── Tool implementations ──────────────────────────────────────────────────
 
-        let selectedPaths: string[];
-        if (changedFiles && changedFiles.length > 0) {
-            const contextMap = this.loadContextMap();
-            selectedPaths = resolveContext(changedFiles, contextMap);
-        } else {
-            const files = this.collectFiles(this.systemRepoPath);
-            const content = files.map(f => {
-                const rel = path.relative(this.systemRepoPath, f);
-                return `### ${rel}\n${fs.readFileSync(f, 'utf8')}`;
-            }).join('\n\n');
-            return { content, count: files.length };
-        }
-
-        const result: string[] = [];
-        let count = 0;
-        for (const selected of selectedPaths) {
-            const full = path.join(this.systemRepoPath, selected);
-            if (!fs.existsSync(full)) continue;
-            const stat = fs.statSync(full);
-            if (stat.isDirectory()) {
-                for (const entry of fs.readdirSync(full, { withFileTypes: true })) {
-                    if (entry.isFile()) {
-                        const filePath = path.join(full, entry.name);
-                        const rel = path.relative(this.systemRepoPath, filePath);
-                        result.push(`### ${rel}\n${fs.readFileSync(filePath, 'utf8')}`);
-                        count++;
-                    }
-                }
-            } else {
-                const rel = path.relative(this.systemRepoPath, full);
-                result.push(`### ${rel}\n${fs.readFileSync(full, 'utf8')}`);
-                count++;
-            }
-        }
-        return { content: result.join('\n\n'), count };
-    }
-
-    private collectFiles(dir: string): string[] {
-        const result: string[] = [];
-        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-            const full = path.join(dir, entry.name);
-            if (entry.isDirectory()) result.push(...this.collectFiles(full));
-            else if (entry.isFile()) result.push(full);
-        }
-        return result;
-    }
-
-    private getWorkspaceRoot(): string {
+    private getRepoRoot(repo: 'source' | 'docs'): string {
+        if (repo === 'docs') return this.systemRepoPath;
         return path.resolve(this.systemRepoPath, '..', '..');
     }
 
-    private readSourceFiles(): { content: string; count: number } {
-        const workspaceRoot = this.getWorkspaceRoot();
-        const EXCLUDED = new Set(['.contextos', '.git', 'node_modules', 'out', 'dist', '.next', '__pycache__']);
-        const MAX_FILE_SIZE = 100 * 1024; // 100KB per fil
-        const result: string[] = [];
-
-        const collect = (dir: string) => {
+    private toolListFiles(repo: 'source' | 'docs'): string {
+        const root = this.getRepoRoot(repo);
+        if (!fs.existsSync(root)) return `ERROR: rot ikke funnet: ${root}`;
+        const EXCLUDED = new Set(['.git', 'node_modules', 'out', 'dist', '.next', '__pycache__']);
+        const results: string[] = [];
+        const walk = (dir: string, depth: number) => {
+            if (depth > 4) return;
             let entries: fs.Dirent[];
             try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-            for (const entry of entries) {
-                if (EXCLUDED.has(entry.name)) continue;
-                const full = path.join(dir, entry.name);
-                if (entry.isDirectory()) {
-                    collect(full);
-                } else if (entry.isFile()) {
+            for (const e of entries) {
+                if (EXCLUDED.has(e.name)) continue;
+                const rel = path.relative(root, path.join(dir, e.name));
+                if (e.isDirectory()) {
+                    results.push(rel + '/');
+                    walk(path.join(dir, e.name), depth + 1);
+                } else {
+                    results.push(rel);
+                }
+            }
+        };
+        walk(root, 0);
+        return results.join('\n') || '(tom mappe)';
+    }
+
+    private toolReadFile(repo: 'source' | 'docs', filePath: string): string {
+        const root = this.getRepoRoot(repo);
+        const full = path.resolve(root, filePath);
+        // Path traversal guard
+        if (!full.startsWith(path.resolve(root))) return 'ERROR: Path traversal ikke tillatt.';
+        if (!fs.existsSync(full)) return `ERROR: Fil ikke funnet: ${filePath}`;
+        const stat = fs.statSync(full);
+        if (stat.size > 200 * 1024) return `ERROR: Fil for stor (${Math.round(stat.size / 1024)}KB > 200KB).`;
+        try {
+            return fs.readFileSync(full, 'utf8');
+        } catch (e) {
+            return `ERROR: Kunne ikke lese fil: ${e instanceof Error ? e.message : String(e)}`;
+        }
+    }
+
+    private toolSearchFiles(repo: 'source' | 'docs', query: string): string {
+        const root = this.getRepoRoot(repo);
+        if (!fs.existsSync(root)) return `ERROR: rot ikke funnet: ${root}`;
+        const EXCLUDED = new Set(['.git', 'node_modules', 'out', 'dist', '.next', '__pycache__']);
+        const results: string[] = [];
+        const lq = query.toLowerCase();
+        const walk = (dir: string) => {
+            let entries: fs.Dirent[];
+            try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+            for (const e of entries) {
+                if (EXCLUDED.has(e.name)) continue;
+                const full = path.join(dir, e.name);
+                if (e.isDirectory()) {
+                    walk(full);
+                } else if (e.isFile()) {
                     try {
-                        const stat = fs.statSync(full);
-                        if (stat.size > MAX_FILE_SIZE) continue;
-                        const rel = path.relative(workspaceRoot, full);
-                        result.push(`### ${rel}\n${fs.readFileSync(full, 'utf8')}`);
+                        const content = fs.readFileSync(full, 'utf8');
+                        const lines = content.split('\n');
+                        const rel = path.relative(root, full);
+                        lines.forEach((line: string, i: number) => {
+                            if (line.toLowerCase().includes(lq)) {
+                                results.push(`${rel}:${i + 1}: ${line.trim()}`);
+                            }
+                        });
                     } catch { /* skip unreadable */ }
                 }
             }
         };
-
-        collect(workspaceRoot);
-        return { content: result.join('\n\n'), count: result.length };
+        walk(root);
+        if (results.length === 0) return '(ingen treff)';
+        if (results.length > 100) return results.slice(0, 100).join('\n') + `\n... (${results.length - 100} flere treff avkortet)`;
+        return results.join('\n');
     }
 
-    private readStandardsMd(): string {
-        const full = path.join(this.systemRepoPath, 'STANDARDS.md');
-        if (!fs.existsSync(full)) return '';
-        return `### STANDARDS.md\n${fs.readFileSync(full, 'utf8')}`;
+    // ── Tool definitions for Anthropic API ───────────────────────────────────
+
+    private getAgentTools(): Anthropic.Tool[] {
+        return [
+            {
+                name: 'list_files',
+                description: 'List filer og mapper i workspace. repo="source" er kildekode-rotet, repo="docs" er system-repo (dokumentasjon, plans, decisions).',
+                input_schema: {
+                    type: 'object' as const,
+                    properties: {
+                        repo: { type: 'string', enum: ['source', 'docs'], description: '"source" for kildekode, "docs" for system-repo' },
+                    },
+                    required: ['repo'],
+                },
+            },
+            {
+                name: 'read_file',
+                description: 'Les innholdet i én fil. repo="source" for kildekode, repo="docs" for system-repo.',
+                input_schema: {
+                    type: 'object' as const,
+                    properties: {
+                        repo: { type: 'string', enum: ['source', 'docs'], description: '"source" for kildekode, "docs" for system-repo' },
+                        path: { type: 'string', description: 'Relativ filsti fra repo-roten' },
+                    },
+                    required: ['repo', 'path'],
+                },
+            },
+            {
+                name: 'search_files',
+                description: 'Søk etter tekst (case-insensitiv grep) i alle filer i repoet.',
+                input_schema: {
+                    type: 'object' as const,
+                    properties: {
+                        repo: { type: 'string', enum: ['source', 'docs'], description: '"source" for kildekode, "docs" for system-repo' },
+                        query: { type: 'string', description: 'Tekst å søke etter' },
+                    },
+                    required: ['repo', 'query'],
+                },
+            },
+        ];
     }
+
+    // ── Dispatch tool call ────────────────────────────────────────────────────
+
+    private dispatchTool(name: string, input: Record<string, string>): string {
+        if (name === 'list_files') {
+            return this.toolListFiles(input.repo as 'source' | 'docs');
+        }
+        if (name === 'read_file') {
+            return this.toolReadFile(input.repo as 'source' | 'docs', input.path);
+        }
+        if (name === 'search_files') {
+            return this.toolSearchFiles(input.repo as 'source' | 'docs', input.query);
+        }
+        return `ERROR: Ukjent tool: ${name}`;
+    }
+
+    private actionLabelFor(name: string, input: Record<string, string>): string {
+        if (name === 'list_files') return `list_files(${input.repo})`;
+        if (name === 'read_file') return `read_file(${input.repo}, ${input.path})`;
+        if (name === 'search_files') return `search_files(${input.repo}, "${input.query}")`;
+        return name;
+    }
+
+    // ── Planning doc writer ───────────────────────────────────────────────────
 
     private writePlanningDoc(filePath: string, content: string): string {
-    const normalized = filePath.replace(/\\/g, '/');
-    const allowed = normalized.startsWith('docs/') || normalized.startsWith('decisions/');
-    if (!allowed) {
-        return `ERROR: kan kun skrive til docs/ eller decisions/. Fikk: ${filePath}`;
+        const normalized = filePath.replace(/\\/g, '/');
+        const allowed = normalized.startsWith('docs/') || normalized.startsWith('decisions/');
+        if (!allowed) {
+            return `ERROR: kan kun skrive til docs/ eller decisions/. Fikk: ${filePath}`;
+        }
+        const full = path.resolve(this.systemRepoPath, filePath);
+        if (!full.startsWith(path.resolve(this.systemRepoPath))) {
+            return 'ERROR: Path traversal ikke tillatt.';
+        }
+
+        if (normalized.startsWith('decisions/')) {
+            const today = new Date().toISOString().slice(0, 10);
+            const hasDate = content.includes('**Dato:**');
+            const hasStatus = content.includes('**Status:**');
+            const hasDecision = content.includes('## Beslutning');
+            const hasBegrunnelse = content.includes('## Begrunnelse');
+            const hasAlternativer = content.includes('## Alternativer vurdert');
+
+            let header = '';
+            if (!hasDate) header += `**Dato:** ${today}\n`;
+            if (!hasStatus) header += `**Status:** Foreslått\n`;
+            if (header) content = header + '\n' + content;
+
+            let footer = '';
+            if (!hasDecision) footer += `\n## Beslutning\n<!-- Hva skal gjøres -->\n`;
+            if (!hasBegrunnelse) footer += `\n## Begrunnelse\n<!-- Hvorfor -->\n`;
+            if (!hasAlternativer) footer += `\n## Alternativer vurdert\n<!-- Hva ble vurdert -->\n`;
+            if (footer) content = content + footer;
+        }
+
+        fs.mkdirSync(path.dirname(full), { recursive: true });
+        fs.writeFileSync(full, content, 'utf8');
+        return `OK: skrev ${filePath}`;
     }
-    const full = path.resolve(this.systemRepoPath, filePath);
-    if (!full.startsWith(path.resolve(this.systemRepoPath))) {
-        return 'ERROR: Path traversal ikke tillatt.';
-    }
 
-    if (normalized.startsWith('decisions/')) {
-        const today = new Date().toISOString().slice(0, 10);
-        const hasDate = content.includes('**Dato:**');
-        const hasStatus = content.includes('**Status:**');
-        const hasDecision = content.includes('## Beslutning');
-        const hasBegrunnelse = content.includes('## Begrunnelse');
-        const hasAlternativer = content.includes('## Alternativer vurdert');
-
-        let header = '';
-        if (!hasDate) header += `**Dato:** ${today}\n`;
-        if (!hasStatus) header += `**Status:** Foreslått\n`;
-        if (header) content = header + '\n' + content;
-
-        let footer = '';
-        if (!hasDecision) footer += `\n## Beslutning\n<!-- Hva skal gjøres -->\n`;
-        if (!hasBegrunnelse) footer += `\n## Begrunnelse\n<!-- Hvorfor -->\n`;
-        if (!hasAlternativer) footer += `\n## Alternativer vurdert\n<!-- Hva ble vurdert -->\n`;
-        if (footer) content = content + footer;
-    }
-
-    fs.mkdirSync(path.dirname(full), { recursive: true });
-    fs.writeFileSync(full, content, 'utf8');
-    return `OK: skrev ${filePath}`;
-}
+    // ── Main message handler ──────────────────────────────────────────────────
 
     private async handleMessage(userText: string, planningMode: boolean = false): Promise<void> {
-        this.postAction('Leser system-repo...');
-        const { content: systemRepoContent, count: sysCount } = this.readSystemRepo();
-        this.postAction(`Leser system-repo... (${sysCount} filer)`);
-
-        this.postAction('Leser kildekode...');
-        const { content: sourceFilesContent, count: srcCount } = this.readSourceFiles();
-        this.postAction(`Leser kildekode... (${srcCount} filer)`);
-
         const modelConfig = this.loadModelConfig();
 
         const apiKey = vscode.workspace.getConfiguration('contextos').get<string>('apiKey');
@@ -237,7 +271,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        const tools: Anthropic.Tool[] = planningMode ? [{
+        const client = new (await import('@anthropic-ai/sdk')).default({ apiKey });
+
+        // Agent tools + optional planning tool
+        const planningTool: Anthropic.Tool = {
             name: 'write_planning_doc',
             description: 'Skriv et plandokument direkte til docs/ eller decisions/ i system-repoet.',
             input_schema: {
@@ -248,83 +285,91 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 },
                 required: ['path', 'content'],
             },
-        }] : [];
+        };
+
+        const tools: Anthropic.Tool[] = [
+            ...this.getAgentTools(),
+            ...(planningMode ? [planningTool] : []),
+        ];
+
+        const systemPrompt = `Du er en hjelpsom AI-assistent for dette VS Code-prosjektet.
+Du har tilgang til følgende verktøy for å hente informasjon ved behov:
+- list_files(repo): list filer i "source" (kildekode) eller "docs" (system-repo/dokumentasjon)
+- read_file(repo, path): les én fil
+- search_files(repo, query): søk etter tekst i filer
+${planningMode ? '- write_planning_doc(path, content): skriv plandokument til docs/ eller decisions/' : ''}
+
+Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne med å lese relevante filer i system-repo (docs) for kontekst.`;
 
         this.conversationHistory.push({ role: 'user', content: userText });
 
-        const standardsContent = this.readStandardsMd();
-        const systemPrompt = `Du er en hjelpsom AI-assistent med kontekst fra prosjektets system-repo og kildekode.\n\n${standardsContent ? standardsContent + '\n\n---\n\n' : ''}${systemRepoContent}${sourceFilesContent ? '\n\n---\n\n## Kildekode\n\n' + sourceFilesContent : ''}`;
+        const messages: Anthropic.MessageParam[] = [...this.conversationHistory];
 
-        const client = new (await import('@anthropic-ai/sdk')).default({ apiKey });
+        // ── Tool-use loop ─────────────────────────────────────────────────────
+        this.postAction('Kontakter AI...');
 
-        if (planningMode) {
-            // Planning mode: tool_use-loop, ikke streaming
-            this.postAction('Kontakter AI (planleggingsmodus)...');
-            const messages = this.conversationHistory;
+        let response = await client.messages.create({
+            model: modelConfig.name,
+            max_tokens: 4096,
+            system: systemPrompt,
+            messages,
+            tools,
+        });
 
-            let response = await client.messages.create({
+        while (response.stop_reason === 'tool_use') {
+            const toolResults: Anthropic.ToolResultBlockParam[] = [];
+
+            for (const block of response.content) {
+                if (block.type !== 'tool_use') continue;
+                const toolBlock = block as Anthropic.ToolUseBlock;
+                const input = toolBlock.input as Record<string, string>;
+                const label = this.actionLabelFor(toolBlock.name, input);
+                this.postAction(label);
+
+                let result: string;
+                if (toolBlock.name === 'write_planning_doc') {
+                    const inp = input as { path: string; content: string };
+                    result = this.writePlanningDoc(inp.path, inp.content);
+                } else {
+                    result = this.dispatchTool(toolBlock.name, input);
+                }
+
+                toolResults.push({
+                    type: 'tool_result',
+                    tool_use_id: toolBlock.id,
+                    content: result,
+                });
+            }
+
+            messages.push({ role: 'assistant', content: response.content });
+            messages.push({ role: 'user', content: toolResults });
+
+            this.postAction('Kontakter AI...');
+            response = await client.messages.create({
                 model: modelConfig.name,
-                max_tokens: 1024,
+                max_tokens: 4096,
                 system: systemPrompt,
                 messages,
                 tools,
             });
-
-            while (response.stop_reason === 'tool_use') {
-                const toolUseBlock = response.content.find(b => b.type === 'tool_use') as Anthropic.ToolUseBlock;
-                const input = toolUseBlock.input as { path: string; content: string };
-                this.postAction(`Skriver til ${input.path}...`);
-                const result = this.writePlanningDoc(input.path, input.content);
-                messages.push({ role: 'assistant', content: response.content });
-                messages.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseBlock.id, content: result }] });
-                this.postAction('Kontakter AI...');
-                response = await client.messages.create({
-                    model: modelConfig.name,
-                    max_tokens: 1024,
-                    system: systemPrompt,
-                    messages,
-                    tools,
-                });
-            }
-
-            const block = response.content[0];
-            const reply = block.type === 'text' ? block.text : '(ingen tekst i svar)';
-            this.conversationHistory.push({ role: 'assistant', content: reply });
-            // Send som chunks for konsistent rendering
-            this.postChunk(reply);
-            this.postDone();
-            return;
         }
 
-        // Standard modus: streaming
-        this.postAction(`Kontakter AI (${modelConfig.name})...`);
-        try {
-            let fullReply = '';
-            const stream = await client.messages.stream({
-                model: modelConfig.name,
-                max_tokens: 1024,
-                system: systemPrompt,
-                messages: this.conversationHistory,
-            });
+        // ── Stream final text response ────────────────────────────────────────
+        // At this point stop_reason === 'end_turn'. Re-stream the final answer.
+        // For simplicity: extract text blocks directly (no re-stream needed since
+        // we already have the response object). Send as chunks to keep UI consistent.
+        const textBlock = response.content.find(b => b.type === 'text') as Anthropic.TextBlock | undefined;
+        const finalText = textBlock?.text ?? '(ingen tekst i svar)';
 
-            for await (const event of stream) {
-                if (
-                    event.type === 'content_block_delta' &&
-                    event.delta.type === 'text_delta'
-                ) {
-                    this.postChunk(event.delta.text);
-                    fullReply += event.delta.text;
-                }
-            }
+        // Push to history
+        this.conversationHistory.push({ role: 'assistant', content: finalText });
 
-            this.conversationHistory.push({ role: 'assistant', content: fullReply });
-            this.postDone();
-        } catch (e: unknown) {
-            this._webviewView?.webview.postMessage({
-                command: 'reply',
-                text: `Feil: ${e instanceof Error ? e.message : String(e)}`
-            });
+        // Send in chunks (simulate streaming for UI consistency)
+        const CHUNK_SIZE = 50;
+        for (let i = 0; i < finalText.length; i += CHUNK_SIZE) {
+            this.postChunk(finalText.slice(i, i + CHUNK_SIZE));
         }
+        this.postDone();
     }
 
     private getHtml(): string {
@@ -361,14 +406,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   .code-block pre { margin: 0; border: none; border-radius: 0; }
   .code-lang { position: absolute; top: 6px; right: 10px; font-size: 10px; color: #666; font-family: monospace; text-transform: uppercase; letter-spacing: 0.05em; }
   .hljs { background: #14141c !important; padding: 10px !important; }
-
   .bubble strong { color: #fff; }
   .bubble em { color: #aaa; }
   .bubble ul, .bubble ol { padding-left: 18px; margin: 4px 0; }
   .bubble li { margin: 2px 0; }
   .cursor::after { content: '▌'; animation: blink 0.8s step-end infinite; color: #5af; }
   @keyframes blink { 50% { opacity: 0; } }
-
   #input-row { display: flex; flex-direction: column; padding: 8px 10px 10px; border-top: 1px solid #2a2a35; background: #1a1a1f; gap: 6px; }
   #input-box { background: #252530; border: 1px solid #3a3a48; border-radius: 12px; display: flex; flex-direction: column; padding: 8px 10px 6px; gap: 4px; }
   #input-box:focus-within { border-color: #2f6feb; }
@@ -395,7 +438,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   .model-option.selected { color: #fff; }
   .model-option .check { color: #4caf7d; font-size: 14px; }
   .model-divider { height: 1px; background: #2a2a38; margin: 4px 0; }
-
   #messages::-webkit-scrollbar { width: 4px; }
   #messages::-webkit-scrollbar-track { background: transparent; }
   #messages::-webkit-scrollbar-thumb { background: #3a3a4a; border-radius: 4px; }
@@ -435,11 +477,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   let stepsCollapsed = false;
 
   function stepIcon(text) {
-    if (text.includes('system-repo')) return '📂';
-    if (text.includes('fil') || text.includes('Leser')) return '📄';
-    if (text.includes('Skriver') || text.includes('decisions') || text.includes('docs')) return '✏️';
+    if (text.startsWith('list_files')) return '📂';
+    if (text.startsWith('read_file')) return '📄';
+    if (text.startsWith('search_files')) return '🔍';
+    if (text.startsWith('write_planning_doc')) return '✏️';
     if (text.includes('AI') || text.includes('Kontakter')) return '✦';
-    if (text.includes('Søker')) return '🔍';
     return '◎';
   }
 
@@ -632,7 +674,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       activeText = '';
       activeSteps = [];
     }
-
     if (msg.command === 'modelUpdated') {
       const m = MODELS.find(x => x.name === msg.name);
       if (m) {
@@ -641,7 +682,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         buildModelPopup();
       }
     }
-
   });
 </script>
 </body>

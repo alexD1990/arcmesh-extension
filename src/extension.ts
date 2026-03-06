@@ -3,11 +3,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as cp from 'child_process';
 import * as os from 'os';
-import Anthropic from '@anthropic-ai/sdk';
 import { ChatViewProvider } from './chatProvider';
-import { ReviewPanel, ReviewDraft } from './reviewProvider';
+import { ReviewPanel } from './reviewProvider';
 import * as yaml from 'js-yaml';
-import { resolveContext } from './contextResolver';
 
 const PROJECT_MD_TEMPLATE = `# Project
 
@@ -20,8 +18,6 @@ const PROJECT_MD_TEMPLATE = `# Project
 ## Tech Stack
 <!-- Teknisk stack -->
 `;
-
-const DIFF_TEMP_FILE = path.join(os.tmpdir(), 'contextos-post-commit.diff');
 
 const ARCHITECTURE_MD_TEMPLATE = `# Architecture
 
@@ -96,12 +92,6 @@ function ensureConfig(workspaceRoot: string): string {
             `  name: ${projectName}`,
             `  description: ""`,
             ``,
-            `context_map:`,
-            `  "src/components/": components/`,
-            `  "src/api/":        decisions/api.md`,
-            `  "src/lib/":        components/lib.md`,
-            `  "*.config.*":      decisions/config.md`,
-            ``,
             `triggers:`,
             `  auto_generate: true`,
             `  on_save: false`,
@@ -118,7 +108,6 @@ function ensureConfig(workspaceRoot: string): string {
 
 interface ContextOSConfig {
     project: { name: string; description: string };
-    context_map: Record<string, string>;
     triggers: { auto_generate: boolean; on_save: boolean };
     model: { provider: string; name: string };
 }
@@ -127,7 +116,6 @@ function loadConfig(workspaceRoot: string): ContextOSConfig {
     const configPath = path.join(workspaceRoot, '.contextos', 'config.yaml');
     const defaultConfig: ContextOSConfig = {
         project: { name: path.basename(workspaceRoot), description: '' },
-        context_map: {},
         triggers: { auto_generate: true, on_save: false },
         model: { provider: 'anthropic', name: 'claude-sonnet-4-6' }
     };
@@ -154,12 +142,12 @@ function installGitHook(workspaceRoot: string) {
     if (!fs.existsSync(hooksDir)) fs.mkdirSync(hooksDir, { recursive: true });
     const hookPath = path.join(hooksDir, 'post-commit');
     const lockFile = path.join(hooksDir, '.contextos_post_commit.lock');
+    const DIFF_TEMP_FILE = path.join(os.tmpdir(), 'contextos-post-commit.diff');
     const hookContent = [
         '#!/bin/sh',
         '# ContextOS post-commit hook – autogenerert',
         '',
-        '# Reentrancy-guard: forhindrer re-entry ved samtidige kjøringer',
-        `LOCK_FILE="${lockFile}"`,
+        'LOCK_FILE="' + lockFile + '"',
         'if [ -f "$LOCK_FILE" ]; then',
         '  echo "[ContextOS] Hook allerede i gang – hopper over." >&2',
         '  exit 0',
@@ -167,25 +155,23 @@ function installGitHook(workspaceRoot: string) {
         'touch "$LOCK_FILE"',
         'trap \'rm -f "$LOCK_FILE"\' EXIT',
         '',
-        '# Contextos-Skip trailer: manuell override via commit message',
         'COMMIT_MSG=$(git log -1 --pretty=%B)',
         'if echo "$COMMIT_MSG" | grep -q "Contextos-Skip: true"; then',
         '  echo "[ContextOS] Contextos-Skip: true funnet – hopper over." >&2',
         '  exit 0',
         'fi',
         '',
-        '# Alt 1: Skipper hvis alle endrede filer er under .contextos/',
         'CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git show --name-only --format="" HEAD)',
         'if [ -z "$CHANGED_FILES" ]; then',
         '  exit 0',
         'fi',
         'NON_CONTEXTOS=$(echo "$CHANGED_FILES" | grep -v "^\\.contextos/")',
         'if [ -z "$NON_CONTEXTOS" ]; then',
-        '  echo "[ContextOS] Kun .contextos/-filer endret – hopper over for å unngå bootstrap-loop." >&2',
+        '  echo "[ContextOS] Kun .contextos/-filer endret – hopper over." >&2',
         '  exit 0',
         'fi',
         '',
-        `DIFF_FILE="${DIFF_TEMP_FILE}"`,
+        'DIFF_FILE="' + DIFF_TEMP_FILE + '"',
         'git diff HEAD~1 HEAD > "$DIFF_FILE" 2>/dev/null || git show HEAD > "$DIFF_FILE" 2>/dev/null',
         'exit 0',
     ].join('\n') + '\n';
@@ -201,124 +187,6 @@ function installGitHook(workspaceRoot: string) {
     console.log(`[ContextOS] post-commit.cmd hook installert: ${cmdHookPath}`);
 }
 
-function readSystemRepo(systemRepoPath: string): string {
-    if (!systemRepoPath || !fs.existsSync(systemRepoPath)) return '(system-repo ikke funnet)';
-    const result: string[] = [];
-    function collect(dir: string) {
-        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-            const full = path.join(dir, entry.name);
-            if (entry.isDirectory()) collect(full);
-            else { result.push(`### ${path.relative(systemRepoPath, full)}\n${fs.readFileSync(full, 'utf8')}`); }
-        }
-    }
-    collect(systemRepoPath);
-    return result.join('\n\n');
-}
-
-function parseDraft(raw: string): ReviewDraft {
-    // Hent seksjonene ved hjelp av XML-lignende tagger
-    function extract(tag: string): string {
-        const re = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i');
-        const m = raw.match(re);
-        return m ? m[1].trim() : '';
-    }
-    const changelog = extract('changelog') || raw; // fallback: hele teksten i changelog
-    const components = extract('components');
-    const decisions = extract('decisions');
-    return { changelog, components, decisions };
-}
-
-function parseChangedFiles(diff: string): string[] {
-    const files: string[] = [];
-    for (const line of diff.split('\n')) {
-        if (line.startsWith('+++ b/')) {
-            files.push(line.slice(6).trim());
-        }
-    }
-    return files;
-}
-
-function readSystemRepoSelective(systemRepoPath: string, selectedPaths: string[]): string {
-    if (!systemRepoPath || !fs.existsSync(systemRepoPath)) return '(system-repo ikke funnet)';
-    const result: string[] = [];
-
-    for (const selected of selectedPaths) {
-        const full = path.join(systemRepoPath, selected);
-        if (!fs.existsSync(full)) continue;
-
-        const stat = fs.statSync(full);
-        if (stat.isDirectory()) {
-            for (const entry of fs.readdirSync(full, { withFileTypes: true })) {
-                if (entry.isFile()) {
-                    const filePath = path.join(full, entry.name);
-                    const rel = path.relative(systemRepoPath, filePath);
-                    result.push(`### ${rel}\n${fs.readFileSync(filePath, 'utf8')}`);
-                }
-            }
-        } else {
-            const rel = path.relative(systemRepoPath, full);
-            // Spesialhåndtering for changelog.md: kun siste 10 linjer
-            if (rel === 'changelog.md') {
-                const lines = fs.readFileSync(full, 'utf8').split('\n');
-                result.push(`### ${rel}\n${lines.slice(-10).join('\n')}`);
-            } else {
-                result.push(`### ${rel}\n${fs.readFileSync(full, 'utf8')}`);
-            }
-        }
-    }
-
-    return result.join('\n\n');
-}
-
-const outputChannel = vscode.window.createOutputChannel('ContextOS');
-
-async function handleDiff(diff: string, systemRepoPath: string, config: ContextOSConfig) {
-    const apiKey = vscode.workspace.getConfiguration('contextos').get<string>('apiKey');
-    if (!apiKey) { vscode.window.showWarningMessage('ContextOS: Sett contextos.apiKey.'); return; }
-
-    const changedFiles = parseChangedFiles(diff);
-    const selectedPaths = resolveContext(changedFiles, config.context_map);
-
-    outputChannel.appendLine(`[ContextOS] Endrede filer: ${changedFiles.join(', ') || '(ingen)'}`);
-    outputChannel.appendLine(`[ContextOS] Valgt kontekst: ${selectedPaths.join(', ')}`);
-
-    const client = new Anthropic({ apiKey });
-    const prompt = `Du er en teknisk dokumentasjonshjelper for prosjektet beskrevet i system-repoet.
-Basert på følgende git diff, generer dokumentasjon strukturert med disse XML-taggene:
-
-<changelog>
-En kort changelog-entry (maks 3 linjer) som beskriver hva som ble endret.
-</changelog>
-
-<components>
-Eventuelle oppdateringer til berørte komponenter. La tagg-innholdet være tomt om ingen komponenter er berørt.
-</components>
-
-<decisions>
-Eventuelle beslutninger som bør dokumenteres. La tagg-innholdet være tomt om ingen nye beslutninger.
-</decisions>
-
-Git diff:
-${diff}
-
-Eksisterende system-repo kontekst:
-${readSystemRepoSelective(systemRepoPath, selectedPaths)}`;
-
-    try {
-        const response = await client.messages.create({
-            model: 'claude-sonnet-4-6',
-            max_tokens: 1024,
-            messages: [{ role: 'user', content: prompt }]
-        });
-        const block = response.content[0];
-        const raw = block.type === 'text' ? block.text : '';
-        const draft = parseDraft(raw);
-        // ReviewPanel.createOrShow(systemRepoPath, draft);
-    } catch (e: unknown) {
-        vscode.window.showErrorMessage(`ContextOS: Feil: ${e instanceof Error ? e.message : String(e)}`);
-    }
-}
-
 let mcpProcess: cp.ChildProcess | undefined;
 
 export async function activate(context: vscode.ExtensionContext) {
@@ -328,7 +196,8 @@ export async function activate(context: vscode.ExtensionContext) {
     if (workspaceFolders && workspaceFolders.length > 0) {
         const workspaceRoot = workspaceFolders[0].uri.fsPath;
         systemRepoPath = ensureSystemRepo(workspaceRoot);
-        const configPath = ensureConfig(workspaceRoot);
+        ensureConfig(workspaceRoot);
+
         const existingApiKey = vscode.workspace.getConfiguration('contextos').get<string>('apiKey');
         if (!existingApiKey) {
             const input = await vscode.window.showInputBox({
@@ -343,11 +212,12 @@ export async function activate(context: vscode.ExtensionContext) {
                 vscode.window.showInformationMessage('ContextOS: API-nøkkel lagret. Klar til bruk!');
             }
         }
+
         let config = loadConfig(workspaceRoot);
+
         const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-        statusBar.text = config.triggers.auto_generate ? '$(check) ContextOS: Auto' : '$(circle-slash) ContextOS: Manuell';
-        statusBar.tooltip = 'ContextOS trigger-modus';
-        statusBar.command = 'contextos.generateDocumentation';
+        statusBar.text = '$(check) ContextOS';
+        statusBar.tooltip = 'ContextOS aktiv';
         statusBar.show();
         context.subscriptions.push(statusBar);
 
@@ -356,26 +226,12 @@ export async function activate(context: vscode.ExtensionContext) {
         );
         const reloadConfig = () => {
             config = loadConfig(workspaceRoot);
-            statusBar.text = config.triggers.auto_generate ? '$(check) ContextOS: Auto' : '$(circle-slash) ContextOS: Manuell';
-            outputChannel.appendLine('[ContextOS] config.yaml reloadet.');
+            console.log('[ContextOS] config.yaml reloadet.');
         };
         configWatcher.onDidChange(reloadConfig);
         configWatcher.onDidCreate(reloadConfig);
         context.subscriptions.push(configWatcher);
 
-        if (config.triggers.on_save) {
-            const saveWatcher = vscode.workspace.createFileSystemWatcher(
-                new vscode.RelativePattern(workspaceRoot, '**/*')
-            );
-            saveWatcher.onDidChange(async (uri) => {
-                if (uri.fsPath.includes('.contextos')) return;
-                outputChannel.appendLine(`[ContextOS] Fil lagret: ${uri.fsPath} – genererer dokumentasjon...`);
-                const diff = cp.execSync(`git -C "${workspaceRoot}" diff HEAD -- "${uri.fsPath}"`).toString();
-                if (!diff.trim()) return;
-                await handleDiff(diff, systemRepoPath, config);
-            });
-            context.subscriptions.push(saveWatcher);
-        }
         installGitHook(workspaceRoot);
 
         const serverScript = path.join(context.extensionPath, 'out', 'mcpServer.js');
@@ -383,37 +239,7 @@ export async function activate(context: vscode.ExtensionContext) {
         mcpProcess.stderr?.on('data', (data) => console.error(`[ContextOS MCP] ${data}`));
         mcpProcess.on('exit', (code) => console.log(`[ContextOS MCP] exited with code ${code}`));
 
-        const diffWatcher = vscode.workspace.createFileSystemWatcher(
-            new vscode.RelativePattern(path.dirname(DIFF_TEMP_FILE), path.basename(DIFF_TEMP_FILE))
-        );
-        const lastDiff = path.join(os.tmpdir(), 'contextos-last.diff');
-
-        const onDiffChange = async () => {
-            if (!fs.existsSync(DIFF_TEMP_FILE)) return;
-            const diff = fs.readFileSync(DIFF_TEMP_FILE, 'utf8');
-            if (!diff.trim()) return;
-            fs.writeFileSync(lastDiff, diff, 'utf8');
-            fs.unlinkSync(DIFF_TEMP_FILE);
-            if (!config.triggers.auto_generate) {
-                outputChannel.appendLine('[ContextOS] auto_generate=false – hopper over auto-generering.');
-                return;
-            }
-            await handleDiff(diff, systemRepoPath, config);
-        };
-        diffWatcher.onDidCreate(onDiffChange);
-        diffWatcher.onDidChange(onDiffChange);
-        context.subscriptions.push(diffWatcher);
-
-        context.subscriptions.push(vscode.commands.registerCommand('contextos.generateDocumentation', async () => {
-            if (fs.existsSync(lastDiff)) {
-                const diff = fs.readFileSync(lastDiff, 'utf8');
-                await handleDiff(diff, systemRepoPath, config);
-            } else {
-                vscode.window.showWarningMessage('ContextOS: Ingen diff tilgjengelig. Gjør en commit først.');
-            }
-        }));
-
-        vscode.window.showInformationMessage('ContextOS: MCP-server og git-hook startet.');
+        vscode.window.showInformationMessage('ContextOS: Klar.');
     }
 
     const provider = new ChatViewProvider(context.extensionUri, systemRepoPath);
