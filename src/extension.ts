@@ -33,7 +33,7 @@ const ARCHITECTURE_MD_TEMPLATE = `# Architecture
 
 const STANDARDS_MD_TEMPLATE = `# Documentation Standards
 
-**Dato:** 2026-03-04
+**Dato:** 2026-03-06
 **Status:** Godkjent
 
 ## Prioriteringsrekkefølge ved konflikt
@@ -53,13 +53,17 @@ const STANDARDS_MD_TEMPLATE = `# Documentation Standards
 
 ## Arbeidsflyt
 
+ContextOS fungerer som en chat-agent. Du stiller spørsmål i chatten,
+og AI-en leser kildekode og dokumentasjon selv via tool use.
+
 ### Før implementasjon
-1. Skriv beslutning i \`decisions/YYYY-MM-DD-slug.md\`
+1. Aktiver planleggingsmodus (Plan: PÅ) i chat-sidebar
+2. Be AI-en skrive beslutning til \`decisions/YYYY-MM-DD-slug.md\`
 
 ### Etter implementasjon
-2. Legg til entry i \`changelog.md\`
-3. Oppdater \`components/\` hvis modulansvar endret seg
-4. Oppdater \`architecture.md\` hvis systemdesign endret seg
+3. Legg til entry i \`changelog.md\` manuelt eller via chat
+4. Oppdater \`components/\` hvis modulansvar endret seg
+5. Oppdater \`architecture.md\` hvis systemdesign endret seg
 
 ### Regler
 - \`decisions/\` skrives alltid før kode
