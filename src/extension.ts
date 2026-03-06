@@ -313,7 +313,7 @@ ${readSystemRepoSelective(systemRepoPath, selectedPaths)}`;
         const block = response.content[0];
         const raw = block.type === 'text' ? block.text : '';
         const draft = parseDraft(raw);
-        ReviewPanel.createOrShow(systemRepoPath, draft);
+        // ReviewPanel.createOrShow(systemRepoPath, draft);
     } catch (e: unknown) {
         vscode.window.showErrorMessage(`ContextOS: Feil: ${e instanceof Error ? e.message : String(e)}`);
     }
