@@ -323,6 +323,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <html lang="no">
 <head>
 <meta charset="UTF-8">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: var(--vscode-font-family); font-size: 13px; background: #1a1a1f; color: #e0e0e0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
@@ -346,6 +348,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   .bubble code { background: #1a1a26; border-radius: 4px; padding: 1px 5px; font-family: var(--vscode-editor-font-family, monospace); font-size: 0.88em; color: #b5cea8; }
   .bubble pre { background: #14141c; border: 1px solid #333; border-radius: 8px; padding: 10px; overflow-x: auto; margin: 6px 0; }
   .bubble pre code { background: none; padding: 0; color: #d4d4d4; }
+  .code-block { position: relative; margin: 6px 0; border-radius: 8px; overflow: hidden; border: 1px solid #333; }
+  .code-block pre { margin: 0; border: none; border-radius: 0; }
+  .code-lang { position: absolute; top: 6px; right: 10px; font-size: 10px; color: #666; font-family: monospace; text-transform: uppercase; letter-spacing: 0.05em; }
+  .hljs { background: #14141c !important; padding: 10px !important; }
+
   .bubble strong { color: #fff; }
   .bubble em { color: #aaa; }
   .bubble ul, .bubble ol { padding-left: 18px; margin: 4px 0; }
@@ -429,7 +436,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   function renderMarkdown(text) {
     return text
-      .replace(/\`\`\`(\\w*)\\n?([\\s\\S]*?)\`\`\`/g, '<pre><code>$2</code></pre>')
+      .replace(/\`\`\`(\\w*)\\n?([\\s\\S]*?)\`\`\`/g, function(_, lang, code) {
+        const validLang = lang && hljs.getLanguage(lang) ? lang : null;
+        const highlighted = validLang
+          ? hljs.highlight(code, { language: validLang }).value
+          : hljs.highlightAuto(code).value;
+        const label = lang ? '<span class="code-lang">' + lang + '</span>' : '';
+        return '<div class="code-block">' + label + '<pre><code class="hljs">' + highlighted + '</code></pre></div>';
+      })
       .replace(/\`([^\`]+)\`/g, '<code>$1</code>')
       .replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>')
       .replace(/\\*([^*]+)\\*/g, '<em>$1</em>')
