@@ -25,7 +25,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         webviewView.webview.onDidReceiveMessage(async (msg: any) => {
             if (msg.command === 'send') {
-                await this.handleMessage(msg.text, msg.planningMode === true);
+                await this.handleMessage(msg.text);
             }
             if (msg.command === 'newChat') {
                 this.conversationHistory = [];
@@ -222,47 +222,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         return name;
     }
 
-    // ── Planning doc writer ───────────────────────────────────────────────────
-
-    private writePlanningDoc(filePath: string, content: string): string {
-        const normalized = filePath.replace(/\\/g, '/');
-        const allowed = normalized.startsWith('docs/') || normalized.startsWith('decisions/');
-        if (!allowed) {
-            return `ERROR: kan kun skrive til docs/ eller decisions/. Fikk: ${filePath}`;
-        }
-        const full = path.resolve(this.systemRepoPath, filePath);
-        if (!full.startsWith(path.resolve(this.systemRepoPath))) {
-            return 'ERROR: Path traversal ikke tillatt.';
-        }
-
-        if (normalized.startsWith('decisions/')) {
-            const today = new Date().toISOString().slice(0, 10);
-            const hasDate = content.includes('**Dato:**');
-            const hasStatus = content.includes('**Status:**');
-            const hasDecision = content.includes('## Beslutning');
-            const hasBegrunnelse = content.includes('## Begrunnelse');
-            const hasAlternativer = content.includes('## Alternativer vurdert');
-
-            let header = '';
-            if (!hasDate) header += `**Dato:** ${today}\n`;
-            if (!hasStatus) header += `**Status:** Foreslått\n`;
-            if (header) content = header + '\n' + content;
-
-            let footer = '';
-            if (!hasDecision) footer += `\n## Beslutning\n<!-- Hva skal gjøres -->\n`;
-            if (!hasBegrunnelse) footer += `\n## Begrunnelse\n<!-- Hvorfor -->\n`;
-            if (!hasAlternativer) footer += `\n## Alternativer vurdert\n<!-- Hva ble vurdert -->\n`;
-            if (footer) content = content + footer;
-        }
-
-        fs.mkdirSync(path.dirname(full), { recursive: true });
-        fs.writeFileSync(full, content, 'utf8');
-        return `OK: skrev ${filePath}`;
-    }
-
     // ── Main message handler ──────────────────────────────────────────────────
 
-    private async handleMessage(userText: string, planningMode: boolean = false): Promise<void> {
+    private async handleMessage(userText: string): Promise<void> {
         const modelConfig = this.loadModelConfig();
 
         const apiKey = vscode.workspace.getConfiguration('contextos').get<string>('apiKey');
@@ -273,31 +235,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         const client = new (await import('@anthropic-ai/sdk')).default({ apiKey });
 
-        // Agent tools + optional planning tool
-        const planningTool: Anthropic.Tool = {
-            name: 'write_planning_doc',
-            description: 'Skriv et plandokument direkte til docs/ eller decisions/ i system-repoet.',
-            input_schema: {
-                type: 'object' as const,
-                properties: {
-                    path: { type: 'string', description: 'Relativ sti, må starte med docs/ eller decisions/' },
-                    content: { type: 'string', description: 'Innholdet i filen' },
-                },
-                required: ['path', 'content'],
-            },
-        };
-
-        const tools: Anthropic.Tool[] = [
-            ...this.getAgentTools(),
-            ...(planningMode ? [planningTool] : []),
-        ];
+        const tools: Anthropic.Tool[] = this.getAgentTools();
 
         const systemPrompt = `Du er en hjelpsom AI-assistent for dette VS Code-prosjektet.
 Du har tilgang til følgende verktøy for å hente informasjon ved behov:
 - list_files(repo): list filer i "source" (kildekode) eller "docs" (system-repo/dokumentasjon)
 - read_file(repo, path): les én fil
 - search_files(repo, query): søk etter tekst i filer
-${planningMode ? '- write_planning_doc(path, content): skriv plandokument til docs/ eller decisions/' : ''}
 
 Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne med å lese relevante filer i system-repo (docs) for kontekst.`;
 
@@ -326,13 +270,7 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
                 const label = this.actionLabelFor(toolBlock.name, input);
                 this.postAction(label);
 
-                let result: string;
-                if (toolBlock.name === 'write_planning_doc') {
-                    const inp = input as { path: string; content: string };
-                    result = this.writePlanningDoc(inp.path, inp.content);
-                } else {
-                    result = this.dispatchTool(toolBlock.name, input);
-                }
+                const result = this.dispatchTool(toolBlock.name, input);
 
                 toolResults.push({
                     type: 'tool_result',
@@ -452,7 +390,6 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
     <textarea id="input" placeholder="Spør om prosjektet..." rows="3"></textarea>
     <div id="input-bottom">
       <div id="input-left">
-        <button id="planning-toggle" class="secondary">Plan: AV</button>
         <button id="new-chat" class="secondary">Ny chat</button>
       </div>
       <div id="input-right">
@@ -469,7 +406,6 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
   const input = document.getElementById('input');
   const sendBtn = document.getElementById('send');
 
-  let planningMode = false;
   let activeBubble = null;
   let activeText = '';
   let activeStepsCard = null;
@@ -567,17 +503,11 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
     stepsCollapsed = false;
     activeBubble = null;
     activeText = '';
-    vscode.postMessage({ command: 'send', text, planningMode });
+    vscode.postMessage({ command: 'send', text });
   });
 
   input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendBtn.click(); } });
   input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = input.scrollHeight + 'px'; });
-
-  document.getElementById('planning-toggle').addEventListener('click', function() {
-    planningMode = !planningMode;
-    this.textContent = planningMode ? 'Plan: PÅ' : 'Plan: AV';
-    this.classList.toggle('active', planningMode);
-  });
 
   const MODELS = [
     { provider: 'anthropic', label: 'Sonnet 4.6', name: 'claude-sonnet-4-6' },
