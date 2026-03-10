@@ -251,6 +251,31 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand('contextos.helloWorld', () => {
         vscode.window.showInformationMessage('Hello World from contextos!');
     }));
+    context.subscriptions.push(vscode.commands.registerCommand('contextos.explainProblem', async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            vscode.window.showWarningMessage('ContextOS: Ingen aktiv editor.');
+            return;
+        }
+
+        const uri = editor.document.uri;
+        const filePath = vscode.workspace.asRelativePath(uri);
+        const allDiagnostics = vscode.languages.getDiagnostics(uri);
+        const errors = allDiagnostics.filter(d => d.severity === vscode.DiagnosticSeverity.Error);
+
+        let message: string;
+        if (errors.length === 0) {
+            vscode.window.showInformationMessage('ContextOS: Ingen feil i denne filen.');
+            return;
+        } else if (errors.length <= 5) {
+            const lines = errors.map(d => `- Ln ${d.range.start.line + 1}: ${d.message}`).join('\n');
+            message = `Forklar disse feilene i ${filePath} og hjelp meg å fikse dem:\n${lines}`;
+        } else {
+            message = `${filePath} har ${errors.length} feil. Les filen og finn rotårsaken.`;
+        }
+
+        await provider.sendMessage(message);
+    }));
 }
 
 export function deactivate() { if (mcpProcess) mcpProcess.kill(); }

@@ -53,6 +53,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private postDone() {
         this._webviewView?.webview.postMessage({ command: 'done' });
     }
+    
+    public async sendMessage(text: string): Promise<void> {
+        await this.handleMessage(text);
+    }
 
     private loadModelConfig(): ModelConfig {
         if (!this.systemRepoPath) return { provider: 'anthropic', name: 'claude-sonnet-4-6' };

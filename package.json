@@ -23,8 +23,21 @@
       {
         "command": "contextos.generateDocumentation",
         "title": "ContextOS: Generate documentation"
+      },
+      {
+        "command": "contextos.explainProblem",
+        "title": "Forklar med ContextOS"
       }
     ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "contextos.explainProblem",
+          "when": "editorHasSelection || editorTextFocus",
+          "group": "navigation"
+        }
+      ]
+    },
     "viewsContainers": {
       "secondarySidebar": [
         {
