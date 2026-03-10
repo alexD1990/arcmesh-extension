@@ -53,7 +53,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private postDone() {
         this._webviewView?.webview.postMessage({ command: 'done' });
     }
-    
+
     public async sendMessage(text: string): Promise<void> {
         await this.handleMessage(text);
     }
@@ -166,6 +166,45 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         return results.join('\n');
     }
 
+    private getWorkspaceRoot(): string {
+    return path.resolve(this.systemRepoPath, '..', '..');
+}
+
+private runGit(args: string): string {
+    const { execSync } = require('child_process');
+    const cwd = this.getWorkspaceRoot();
+    try {
+        const out: Buffer = execSync(`git ${args}`, {
+            cwd,
+            timeout: 5000,
+            maxBuffer: 100 * 1024,
+        });
+        return out.toString('utf8').trim() || '(ingen output)';
+    } catch (e: any) {
+        return `ERROR: ${e.message ?? String(e)}`;
+    }
+}
+
+private toolGitLog(n: number): string {
+    return this.runGit(`log --oneline -${n}`);
+}
+
+private toolGitShow(hash: string): string {
+    return this.runGit(`show ${hash}`);
+}
+
+private toolGitDiff(hash1: string, hash2: string): string {
+    return this.runGit(`diff ${hash1} ${hash2}`);
+}
+
+private toolGitDiffHead(): string {
+    return this.runGit('diff HEAD');
+}
+
+private toolGitBlame(filePath: string): string {
+    return this.runGit(`blame ${filePath}`);
+}
+
     // ── Tool definitions for Anthropic API ───────────────────────────────────
 
     private getAgentTools(): Anthropic.Tool[] {
@@ -205,6 +244,60 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     required: ['repo', 'query'],
                 },
             },
+            {
+                name: 'git_log',
+                description: 'Vis siste N commits (default 20). Returnerer hash og melding per commit.',
+                input_schema: {
+                    type: 'object' as const,
+                    properties: {
+                        n: { type: 'number', description: 'Antall commits å vise (default 20)' },
+                    },
+                    required: [],
+                },
+            },
+            {
+                name: 'git_show',
+                description: 'Vis innholdet i én spesifikk commit (diff + metadata).',
+                input_schema: {
+                    type: 'object' as const,
+                    properties: {
+                        hash: { type: 'string', description: 'Commit-hash (kort eller full)' },
+                    },
+                    required: ['hash'],
+                },
+            },
+            {
+                name: 'git_diff',
+                description: 'Vis diff mellom to commits.',
+                input_schema: {
+                    type: 'object' as const,
+                    properties: {
+                        hash1: { type: 'string', description: 'Fra-commit' },
+                        hash2: { type: 'string', description: 'Til-commit' },
+                    },
+                    required: ['hash1', 'hash2'],
+                },
+            },
+            {
+                name: 'git_diff_head',
+                description: 'Vis ucommittede endringer akkurat nå (git diff HEAD).',
+                input_schema: {
+                    type: 'object' as const,
+                    properties: {},
+                    required: [],
+                },
+            },
+            {
+                name: 'git_blame',
+                description: 'Vis hvem som endret hvilken linje i en fil og i hvilken commit.',
+                input_schema: {
+                    type: 'object' as const,
+                    properties: {
+                        path: { type: 'string', description: 'Relativ filsti fra workspace-rot' },
+                    },
+                    required: ['path'],
+                },
+            },
         ];
     }
 
@@ -220,6 +313,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         if (name === 'search_files') {
             return this.toolSearchFiles(input.repo as 'source' | 'docs', input.query);
         }
+        if (name === 'git_log') {
+            return this.toolGitLog(Number(input.n) || 20);
+        }
+        if (name === 'git_show') {
+            return this.toolGitShow(input.hash);
+        }
+        if (name === 'git_diff') {
+            return this.toolGitDiff(input.hash1, input.hash2);
+        }
+        if (name === 'git_diff_head') {
+            return this.toolGitDiffHead();
+        }
+        if (name === 'git_blame') {
+            return this.toolGitBlame(input.path);
+        }
         return `ERROR: Ukjent tool: ${name}`;
     }
 
@@ -227,6 +335,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         if (name === 'list_files') return `list_files(${input.repo})`;
         if (name === 'read_file') return `read_file(${input.repo}, ${input.path})`;
         if (name === 'search_files') return `search_files(${input.repo}, "${input.query}")`;
+        if (name === 'git_log') return `git_log(${input.n || 20})`;
+        if (name === 'git_show') return `git_show(${input.hash})`;
+        if (name === 'git_diff') return `git_diff(${input.hash1}, ${input.hash2})`;
+        if (name === 'git_diff_head') return `git_diff_head()`;
+        if (name === 'git_blame') return `git_blame(${input.path})`;
         return name;
     }
 
@@ -244,6 +357,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             return 'Går gjennom dokumentasjon...';
         }
         if (lastToolName === 'search_files') return 'Oppsummerer søkeresultater...';
+        if (lastToolName === 'git_log') return 'Leser commit-historikk...';
+        if (lastToolName === 'git_show') return 'Analyserer commit...';
+        if (lastToolName === 'git_diff') return 'Analyserer endringer...';
+        if (lastToolName === 'git_diff_head') return 'Ser på ucommittede endringer...';
+        if (lastToolName === 'git_blame') return 'Analyserer linjehistorikk...';
         return 'Tenker...';
     }
 
