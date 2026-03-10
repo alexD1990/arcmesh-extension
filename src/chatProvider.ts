@@ -38,8 +38,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         });
     }
 
-    private postAction(text: string) {
-        this._webviewView?.webview.postMessage({ command: 'action', text });
+    private postAction(text: string, result?: string) {
+        this._webviewView?.webview.postMessage({ command: 'action', text, result: result ?? '' });
+    }
+
+    private postStatus(text: string) {
+        this._webviewView?.webview.postMessage({ command: 'status', text });
     }
 
     private postChunk(text: string) {
@@ -222,6 +226,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         return name;
     }
 
+    private contextualLabel(lastToolName: string, lastInput: Record<string, string>): string {
+        if (lastToolName === 'read_file') {
+            const p = lastInput.path ?? '';
+            if (p.includes('project')) return 'Analyserer prosjektdokumentasjon...';
+            if (p.includes('changelog')) return 'Leser endringshistorikk...';
+            if (p.includes('decision')) return 'Leser beslutningsdokument...';
+            if (lastInput.repo === 'source') return 'Analyserer kildekode...';
+            return 'Analyserer dokument...';
+        }
+        if (lastToolName === 'list_files') {
+            if (lastInput.repo === 'source') return 'Går gjennom kildekode...';
+            return 'Går gjennom dokumentasjon...';
+        }
+        if (lastToolName === 'search_files') return 'Oppsummerer søkeresultater...';
+        return 'Tenker...';
+    }
+
     // ── Main message handler ──────────────────────────────────────────────────
 
     private async handleMessage(userText: string): Promise<void> {
@@ -243,14 +264,17 @@ Du har tilgang til følgende verktøy for å hente informasjon ved behov:
 - read_file(repo, path): les én fil
 - search_files(repo, query): søk etter tekst i filer
 
-Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne med å lese relevante filer i system-repo (docs) for kontekst.`;
+Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne med å lese relevante filer i system-repo (docs) for kontekst.
+Unngå emojier i svar. Bruk kun vanlig tekst.`;
 
         this.conversationHistory.push({ role: 'user', content: userText });
 
         const messages: Anthropic.MessageParam[] = [...this.conversationHistory];
 
         // ── Tool-use loop ─────────────────────────────────────────────────────
-        this.postAction('Kontakter AI...');
+        this.postStatus('Tenker...');
+        let lastToolName = '';
+        let lastInput: Record<string, string> = {};
 
         let response = await client.messages.create({
             model: modelConfig.name,
@@ -268,9 +292,12 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
                 const toolBlock = block as Anthropic.ToolUseBlock;
                 const input = toolBlock.input as Record<string, string>;
                 const label = this.actionLabelFor(toolBlock.name, input);
-                this.postAction(label);
 
                 const result = this.dispatchTool(toolBlock.name, input);
+                lastToolName = toolBlock.name;
+                lastInput = input;
+
+                this.postAction(label, result);
 
                 toolResults.push({
                     type: 'tool_result',
@@ -282,7 +309,7 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
             messages.push({ role: 'assistant', content: response.content });
             messages.push({ role: 'user', content: toolResults });
 
-            this.postAction('Kontakter AI...');
+            this.postStatus(this.contextualLabel(lastToolName, lastInput));
             response = await client.messages.create({
                 model: modelConfig.name,
                 max_tokens: 4096,
@@ -461,6 +488,24 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
     .step-row { display: flex; align-items: flex-start; gap: 8px; padding: 3px 0; color: #555; }
     .step-icon { font-size: 12px; margin-top: 1px; flex-shrink: 0; }
     .step-text { line-height: 1.4; }
+    .step-text.status { color: #e0e0e0; font-size: 14px; }
+    .step-detail {
+        display: none;
+        margin: 4px 0 4px 20px;
+        padding: 6px 8px;
+        background: #12121a;
+        border-radius: 6px;
+        font-size: 11px;
+        color: #666;
+        font-family: var(--vscode-editor-font-family, monospace);
+        white-space: pre-wrap;
+        word-break: break-all;
+        max-height: 200px;
+        overflow-y: auto;
+        cursor: default;
+    }
+    .step-row.expandable { cursor: pointer; }
+    .step-row.expandable:hover .step-text { color: #aaa; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
     /* ── Inline code ────────────────────────────────────────── */
@@ -697,10 +742,6 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
     let loadingBubble = null;
 
     function stepIcon(text) {
-        if (text.startsWith("list_files")) return "\\u{1F4C2}";
-        if (text.startsWith("read_file")) return "\\u{1F4C4}";
-        if (text.startsWith("search_files")) return "\\u{1F50D}";
-        if (text.startsWith("write_planning_doc")) return "\\u270F\\uFE0F";
         return "\\u25CE";
     }
 
@@ -805,19 +846,28 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
         return card;
     }
 
-    function addStepRow(card, text) {
+    function addStepRow(card, text, isStatus, detail) {
         const body = card.querySelector(".steps-body");
         const row = document.createElement("div");
-        row.className = "step-row";
+        row.className = isStatus ? "step-row" : "step-row" + (detail ? " expandable" : "");
         const icon = document.createElement("span");
         icon.className = "step-icon";
         icon.textContent = stepIcon(text);
         const label = document.createElement("span");
-        label.className = "step-text";
+        label.className = isStatus ? "step-text status" : "step-text";
         label.textContent = text;
         row.appendChild(icon);
         row.appendChild(label);
         body.appendChild(row);
+        if (!isStatus && detail) {
+            const detailEl = document.createElement("div");
+            detailEl.className = "step-detail";
+            detailEl.textContent = detail;
+            body.appendChild(detailEl);
+            row.addEventListener("click", function() {
+                detailEl.style.display = detailEl.style.display === "block" ? "none" : "block";
+            });
+        }
         messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
@@ -930,18 +980,30 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
     window.addEventListener("message", function(e) {
         const msg = e.data;
 
-        if (msg.command === "action") {
-        removeLoadingBubble();
-        if (!activeStepsCard) {
-            activeStepsCard = createStepsCard();
+        if (msg.command === "status") {
+            removeLoadingBubble();
+            if (!activeStepsCard) {
+                activeStepsCard = createStepsCard();
+            }
+            addStepRow(activeStepsCard, msg.text, true);
+            activeSteps.push(msg.text);
+            const lbl = activeStepsCard.querySelector(".label");
+            if (lbl) lbl.textContent = msg.text;
         }
-        addStepRow(activeStepsCard, msg.text);
-        activeSteps.push(msg.text);
-        const lbl = activeStepsCard.querySelector(".label");
-        if (lbl) lbl.textContent = msg.text;
+
+        if (msg.command === "action") {
+            removeLoadingBubble();
+            if (!activeStepsCard) {
+                activeStepsCard = createStepsCard();
+            }
+            addStepRow(activeStepsCard, msg.text, false, msg.result);
+            activeSteps.push(msg.text);
+            const lbl = activeStepsCard.querySelector(".label");
+            if (lbl) lbl.textContent = msg.text;
         }
 
         if (msg.command === "chunk") {
+
         removeLoadingBubble();
         if (!activeBubble) {
             activeBubble = addBubble("assistant");
