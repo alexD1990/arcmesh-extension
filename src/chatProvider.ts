@@ -361,7 +361,7 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
         padding: 10px 14px;
         border-radius: 18px;
         border-bottom-right-radius: 4px;
-        background: #2563eb;
+        background: #1a4fa0;
         color: #fff;
         line-height: 1.6;
         word-break: break-word;
@@ -372,14 +372,10 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
         display: block;
         margin-left: 0;
         margin-right: auto;
-        margin-bottom: 16px;
+        margin-bottom: 24px;
         max-width: 100%;
-        padding: 12px 16px;
-        border-radius: 18px;
-        border-bottom-left-radius: 4px;
-        background: #252530;
+        padding: 8px 0;
         color: #e0e0e0;
-        border: 1px solid #333340;
         line-height: 1.6;
         word-break: break-word;
         font-size: 14px;
@@ -390,12 +386,7 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
         display: block;
         margin-left: 0;
         margin-bottom: 16px;
-        padding: 14px 16px;
-        border-radius: 18px;
-        border-bottom-left-radius: 4px;
-        background: #252530;
-        border: 1px solid #333340;
-        width: 56px;
+        padding: 8px 0;
     }
 
     .orbit-container {
@@ -437,12 +428,8 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
     /* ── Steps card ─────────────────────────────────────────── */
     .steps-card {
         display: block;
-        margin-bottom: 16px;
+        margin-bottom: 4px;
         max-width: 100%;
-        background: #1e1e2a;
-        border: 1px solid #333348;
-        border-radius: 12px;
-        overflow: hidden;
         font-size: 12px;
     }
 
@@ -450,12 +437,13 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
         display: flex;
         align-items: center;
         gap: 8px;
-        padding: 8px 12px;
+        padding: 4px 0;
         cursor: pointer;
         user-select: none;
-        color: #999;
+        color: #666;
+        font-size: 12px;
     }
-    .steps-header:hover { background: #252532; }
+    .steps-header:hover { color: #999; }
     .steps-header .spinner {
         width: 13px;
         height: 13px;
@@ -469,9 +457,8 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
     .steps-header .label { flex: 1; color: #bbb; }
     .steps-header .chevron { font-size: 10px; color: #666; transition: transform 0.2s; }
     .steps-header.collapsed .chevron { transform: rotate(-90deg); }
-    .steps-body { border-top: 1px solid #2a2a38; }
-    .step-row { display: flex; align-items: flex-start; gap: 10px; padding: 6px 12px; border-bottom: 1px solid #22222e; color: #888; }
-    .step-row:last-child { border-bottom: none; }
+    .steps-body { padding-left: 4px; }
+    .step-row { display: flex; align-items: flex-start; gap: 8px; padding: 3px 0; color: #555; }
     .step-icon { font-size: 12px; margin-top: 1px; flex-shrink: 0; }
     .step-text { line-height: 1.4; }
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -565,7 +552,7 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
         gap: 6px;
         transition: border-color 0.15s;
     }
-    #input-box:focus-within { border-color: #2563eb; }
+    #input-box:focus-within { border-color: #1a4fa0; }
 
     #input {
         background: transparent;
@@ -626,7 +613,7 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
     #model-btn:hover { background: #252530; color: #aaa; }
 
     #send {
-        background: #2563eb;
+        background: #1a4fa0;
         color: #fff;
         border: none;
         width: 32px;
@@ -639,7 +626,7 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
         justify-content: center;
         line-height: 1;
     }
-    #send:hover { background: #3a7fff; }
+    #send:hover { background: #2260c4; }
     #send:disabled { opacity: 0.4; cursor: default; }
 
     /* ── Model popup ────────────────────────────────────────── */
