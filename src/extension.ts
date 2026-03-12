@@ -268,8 +268,10 @@ export async function activate(context: vscode.ExtensionContext) {
             vscode.window.showInformationMessage('ContextOS: Ingen feil i denne filen.');
             return;
         } else if (errors.length <= 5) {
-            const lines = errors.map(d => `- Ln ${d.range.start.line + 1}: ${d.message}`).join('\n');
-            message = `Forklar disse feilene i ${filePath} og hjelp meg å fikse dem:\n${lines}`;
+            const lines = errors.map(d => `- Ln ${d.range.start.line + 1}, Col ${d.range.start.character + 1}: ${d.message}`).join('\n');
+            const text = editor.document.getText();
+            const numbered = text.split('\n').map((l, i) => `${i + 1}: ${l}`).join('\n');
+            message = `Forklar disse feilene i ${filePath} og hjelp meg å fikse dem:\n${lines}\n\nFilinnhold:\n${numbered}`;
         } else {
             message = `${filePath} har ${errors.length} feil. Les filen og finn rotårsaken.`;
         }
