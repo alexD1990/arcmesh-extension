@@ -442,25 +442,27 @@ Unngå emojier i svar. Bruk kun vanlig tekst.`;
             });
         }
 
-        // ── Extract final text response ───────────────────────────────────────
-        // response already contains the final answer – extract and send as chunks.
-        const textBlock = response.content.find(b => b.type === 'text') as Anthropic.TextBlock | undefined;
-        const finalText = textBlock?.text ?? '(ingen tekst i svar)';
+        // ── True token-for-token streaming (B3) ──────────────────────────────
+        // Tool-loopen er ferdig. Nå streamer vi sluttsvaret direkte fra API.
+        const stream = await client.messages.stream({
+            model: modelConfig.name,
+            max_tokens: 4096,
+            system: systemPrompt,
+            messages,
+        });
+
+        let finalText = '';
+        for await (const event of stream) {
+            if (
+                event.type === 'content_block_delta' &&
+                event.delta.type === 'text_delta'
+            ) {
+                this.postChunk(event.delta.text);
+                finalText += event.delta.text;
+            }
+        }
 
         this.conversationHistory.push({ role: 'assistant', content: finalText });
-
-        // Stream via SDK from the start for true token-by-token delivery.
-        // We rebuild messages without tool history to get a clean stream.
-        const streamMessages: Anthropic.MessageParam[] = [
-            ...this.conversationHistory.slice(0, -1) // all except the assistant reply we just pushed
-        ];
-
-        // Actually: just send finalText as chunks directly – we already have it.
-        const CHUNK_SIZE = 8;
-        for (let i = 0; i < finalText.length; i += CHUNK_SIZE) {
-            this.postChunk(finalText.slice(i, i + CHUNK_SIZE));
-            await new Promise(r => setTimeout(r, 8));
-        }
         this.postDone();
     }
 
