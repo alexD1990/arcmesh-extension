@@ -16,6 +16,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         private readonly secrets: vscode.SecretStorage
     ) {}
     private conversationHistory: Anthropic.MessageParam[] = [];
+    private currentLogFile: string | null = null;
 
     resolveWebviewView(webviewView: vscode.WebviewView) {
         this._webviewView = webviewView;
@@ -29,9 +30,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 await this.handleMessage(msg.text);
             }
             if (msg.command === 'newChat') {
-                this.conversationHistory = [];
-                webviewView.webview.postMessage({ command: 'cleared' });
-            }
+            this.conversationHistory = [];
+            this.currentLogFile = null;
+            webviewView.webview.postMessage({ command: 'cleared' });
+        }
             if (msg.command === 'updateModel') {
                 this.updateModelInConfig(msg.provider, msg.name);
                 webviewView.webview.postMessage({ command: 'modelUpdated', name: msg.name });
@@ -247,6 +249,24 @@ private toolGitBlame(filePath: string): string {
         }
     }
 
+private appendToLog(role: 'user' | 'assistant', text: string): void {
+    if (!this.systemRepoPath) return;
+    try {
+        const logDir = path.join(this.systemRepoPath, 'chat-logs');
+        if (!fs.existsSync(logDir)) {
+            fs.mkdirSync(logDir, { recursive: true });
+        }
+        if (!this.currentLogFile) {
+            const ts = new Date().toISOString().replace(/:/g, '-').replace(/\..+$/, '');
+            this.currentLogFile = path.join(logDir, `${ts}.md`);
+        }
+        const prefix = role === 'user' ? '## Bruker' : '## AI';
+        const entry = `${prefix}\n${text}\n\n`;
+        fs.appendFileSync(this.currentLogFile, entry, 'utf8');
+    } catch (e) {
+        console.error('[ContextOS] Feil ved skriving til chat-logg:', e);
+    }
+}
     // ── Tool definitions for Anthropic API ───────────────────────────────────
 
     private getAgentTools(): Anthropic.Tool[] {
@@ -354,6 +374,26 @@ private toolGitBlame(filePath: string): string {
                     required: ['file', 'old_line', 'new_line', 'reason'],
                 },
             },
+            {
+                name: 'list_chat_logs',
+                description: 'List alle chat-loggfiler i .contextos/system-repo/chat-logs/. Returnerer filnavn med ISO-timestamps.',
+                input_schema: {
+                    type: 'object' as const,
+                    properties: {},
+                    required: [],
+                },
+            },
+            {
+                name: 'read_chat_log',
+                description: 'Les innholdet i én spesifikk chat-loggfil.',
+                input_schema: {
+                    type: 'object' as const,
+                    properties: {
+                        filename: { type: 'string', description: 'Filnavn (f.eks. "2026-03-20T14-32-00.md")' },
+                    },
+                    required: ['filename'],
+                },
+            },
         ];
     }
 
@@ -393,6 +433,19 @@ private toolGitBlame(filePath: string): string {
                 reason: input.reason ?? '',
             });
             return `PROPOSAL_SENT: Forslag sendt til bruker for godkjenning (${input.file}).`;
+        }
+        if (name === 'list_chat_logs') {
+            const logDir = path.join(this.systemRepoPath, 'chat-logs');
+            if (!fs.existsSync(logDir)) return '(ingen chat-logger ennå)';
+            const files = fs.readdirSync(logDir).filter(f => f.endsWith('.md')).sort().reverse();
+            return files.length > 0 ? files.join('\n') : '(ingen chat-logger ennå)';
+        }
+        if (name === 'read_chat_log') {
+            const logDir = path.join(this.systemRepoPath, 'chat-logs');
+            const safe = path.basename(input.filename);
+            const full = path.join(logDir, safe);
+            if (!fs.existsSync(full)) return `ERROR: Fil ikke funnet: ${input.filename}`;
+            return fs.readFileSync(full, 'utf8');
         }
         return `ERROR: Ukjent tool: ${name}`;
     }
@@ -458,6 +511,7 @@ Bruk verktøyene proaktivt for å besvare spørsmål om prosjektet. Start gjerne
 Unngå emojier i svar. Bruk kun vanlig tekst.`;
 
         this.conversationHistory.push({ role: 'user', content: userText });
+        this.appendToLog('user', userText);
 
         const messages: Anthropic.MessageParam[] = [...this.conversationHistory];
 
@@ -530,6 +584,7 @@ Unngå emojier i svar. Bruk kun vanlig tekst.`;
         }
 
         this.conversationHistory.push({ role: 'assistant', content: finalText });
+        this.appendToLog('assistant', finalText);
         this.postDone();
     }
 
