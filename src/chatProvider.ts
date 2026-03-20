@@ -12,7 +12,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     constructor(
         private readonly extensionUri: vscode.Uri,
-        private systemRepoPath: string
+        private systemRepoPath: string,
+        private readonly secrets: vscode.SecretStorage
     ) {}
     private conversationHistory: Anthropic.MessageParam[] = [];
 
@@ -370,9 +371,9 @@ private toolGitBlame(filePath: string): string {
     private async handleMessage(userText: string): Promise<void> {
         const modelConfig = this.loadModelConfig();
 
-        const apiKey = vscode.workspace.getConfiguration('contextos').get<string>('apiKey');
+        const apiKey = await this.secrets.get('contextos.apiKey');
         if (!apiKey) {
-            this._webviewView?.webview.postMessage({ command: 'reply', text: '⚠️ Sett contextos.apiKey i VS Code settings.' });
+            this._webviewView?.webview.postMessage({ command: 'reply', text: '⚠️ Ingen API-nøkkel funnet. Restart VS Code og lim inn nøkkelen.' });
             return;
         }
 

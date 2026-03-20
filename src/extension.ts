@@ -202,7 +202,17 @@ export async function activate(context: vscode.ExtensionContext) {
         systemRepoPath = ensureSystemRepo(workspaceRoot);
         ensureConfig(workspaceRoot);
 
-        const existingApiKey = vscode.workspace.getConfiguration('contextos').get<string>('apiKey');
+        // Migrer fra klartekst settings til SecretStorage
+        const legacyApiKey = vscode.workspace.getConfiguration('contextos').get<string>('apiKey');
+        if (legacyApiKey) {
+            await context.secrets.store('contextos.apiKey', legacyApiKey);
+            await vscode.workspace.getConfiguration('contextos').update(
+                'apiKey', undefined, vscode.ConfigurationTarget.Global
+            );
+            console.log('[ContextOS] API-nøkkel migrert fra settings til SecretStorage.');
+        }
+
+        const existingApiKey = await context.secrets.get('contextos.apiKey');
         if (!existingApiKey) {
             const input = await vscode.window.showInputBox({
                 prompt: 'Velkommen til ContextOS! Lim inn din Anthropic API-nøkkel for å komme i gang.',
@@ -210,9 +220,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 ignoreFocusOut: true
             });
             if (input) {
-                await vscode.workspace.getConfiguration('contextos').update(
-                    'apiKey', input, vscode.ConfigurationTarget.Global
-                );
+                await context.secrets.store('contextos.apiKey', input);
                 vscode.window.showInformationMessage('ContextOS: API-nøkkel lagret. Klar til bruk!');
             }
         }
@@ -246,7 +254,7 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage('ContextOS: Klar.');
     }
 
-    const provider = new ChatViewProvider(context.extensionUri, systemRepoPath);
+    const provider = new ChatViewProvider(context.extensionUri, systemRepoPath, context.secrets);
     context.subscriptions.push(vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, provider));
     context.subscriptions.push(vscode.commands.registerCommand('contextos.helloWorld', () => {
         vscode.window.showInformationMessage('Hello World from contextos!');
