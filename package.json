@@ -27,6 +27,10 @@
       {
         "command": "contextos.explainProblem",
         "title": "Forklar med ContextOS"
+      },
+      {
+        "command": "contextos.analyzeHistory",
+        "title": "ContextOS: Analyser prosjekthistorikk"
       }
     ],
     "menus": {

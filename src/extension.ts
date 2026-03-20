@@ -286,6 +286,14 @@ export async function activate(context: vscode.ExtensionContext) {
 
         await provider.sendMessage(message);
     }));
+
+    context.subscriptions.push(vscode.commands.registerCommand('contextos.analyzeHistory', async () => {
+        if (!systemRepoPath) {
+            vscode.window.showWarningMessage('ContextOS: Ingen aktiv workspace.');
+            return;
+        }
+        await provider.runHistoryAnalysis();
+    }));
 }
 
 export function deactivate() { if (mcpProcess) mcpProcess.kill(); }

@@ -232,15 +232,27 @@ private toolGitBlame(filePath: string): string {
             return { ok: false, error: 'Path traversal blokkert.' };
         }
         try {
+            const dir = path.dirname(full);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            const exists = fs.existsSync(full);
+            if (!exists && !msg.old_line) {
+                fs.writeFileSync(full, msg.new_line + '\n', 'utf8');
+                return { ok: true };
+            }
+            if (!exists) {
+                return { ok: false, error: `Fil ikke funnet: ${msg.file}` };
+            }
             const content = fs.readFileSync(full, 'utf8');
             let updated: string;
             if (!msg.old_line) {
                 updated = content.trimEnd() + '\n' + msg.new_line + '\n';
             } else {
-                if (!content.includes(msg.old_line)) {
+                const normalizedContent = content.replace(/\r\n/g, '\n');
+                const normalizedOld = msg.old_line.replace(/\r\n/g, '\n');
+                if (!normalizedContent.includes(normalizedOld)) {
                     return { ok: false, error: `old_line ikke funnet: "${msg.old_line}"` };
                 }
-                updated = content.replace(msg.old_line, msg.new_line);
+                updated = normalizedContent.replace(normalizedOld, msg.new_line);
             }
             fs.writeFileSync(full, updated, 'utf8');
             return { ok: true };
@@ -586,6 +598,7 @@ Unngå emojier i svar. Bruk kun vanlig tekst.`;
         this.conversationHistory.push({ role: 'assistant', content: finalText });
         this.appendToLog('assistant', finalText);
         this.postDone();
+    
     }
 
     private getHtml(): string {
@@ -1369,5 +1382,28 @@ Unngå emojier i svar. Bruk kun vanlig tekst.`;
     </script>
     </body>
     </html>`;
+       }
+
+    public async runHistoryAnalysis(): Promise<void> {
+        const apiKey = await this.secrets.get('contextos.apiKey');
+        if (!apiKey) {
+            this._webviewView?.webview.postMessage({ command: 'reply', text: '⚠️ Ingen API-nøkkel funnet.' });
+            return;
         }
+
+        const systemPrompt = `Du er en historisk analyse-agent for et software-prosjekt.
+Din oppgave er å lese git-historikken og bygge opp dokumentasjon i system-repo.
+Bruk propose_doc_edit for hvert forslag – én endring om gangen.
+Bygg opp project_state.md, changelog.md og decisions/-filer basert på commit-historikken.
+Unngå emojier. Skriv på norsk.`;
+
+        const userText = `Analyser hele git-historikken til dette prosjektet og bygg opp system-repo.
+Start med git_log for å se alle commits, bruk deretter git_show per commit for å forstå hva som ble gjort.
+Foreslå innhold til project_state.md, changelog.md og relevante decisions/-filer via propose_doc_edit.`;
+
+        this.conversationHistory = [];
+        this.currentLogFile = null;
+
+        await this.handleMessage(userText);
     }
+}
