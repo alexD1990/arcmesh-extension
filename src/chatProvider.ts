@@ -36,6 +36,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 this.updateModelInConfig(msg.provider, msg.name);
                 webviewView.webview.postMessage({ command: 'modelUpdated', name: msg.name });
             }
+            if (msg.command === 'proposal-approve') {
+                const result = this.handleProposalApprove(msg);
+                webviewView.webview.postMessage({
+                    command: 'proposal-result',
+                    proposalId: msg.proposalId,
+                    ok: result.ok,
+                    error: result.error,
+                });
+            }
+            if (msg.command === 'proposal-reject') {
+                webviewView.webview.postMessage({
+                    command: 'proposal-result',
+                    proposalId: msg.proposalId,
+                    ok: true,
+                });
+            }
         });
     }
 
@@ -203,8 +219,33 @@ private toolGitDiffHead(): string {
 }
 
 private toolGitBlame(filePath: string): string {
-    return this.runGit(`blame ${filePath}`);
-}
+        return this.runGit(`blame ${filePath}`);
+    }
+
+    private handleProposalApprove(msg: { file: string; old_line: string; new_line: string }): { ok: boolean; error?: string } {
+        const docsRoot = path.resolve(this.systemRepoPath);
+        const normalized = msg.file.replace(/\//g, path.sep);
+        const full = path.resolve(docsRoot, normalized);
+        if (!full.toLowerCase().startsWith(docsRoot.toLowerCase())) {
+            return { ok: false, error: 'Path traversal blokkert.' };
+        }
+        try {
+            const content = fs.readFileSync(full, 'utf8');
+            let updated: string;
+            if (!msg.old_line) {
+                updated = content.trimEnd() + '\n' + msg.new_line + '\n';
+            } else {
+                if (!content.includes(msg.old_line)) {
+                    return { ok: false, error: `old_line ikke funnet: "${msg.old_line}"` };
+                }
+                updated = content.replace(msg.old_line, msg.new_line);
+            }
+            fs.writeFileSync(full, updated, 'utf8');
+            return { ok: true };
+        } catch (e: any) {
+            return { ok: false, error: e.message };
+        }
+    }
 
     // ── Tool definitions for Anthropic API ───────────────────────────────────
 
@@ -299,6 +340,20 @@ private toolGitBlame(filePath: string): string {
                     required: ['path'],
                 },
             },
+            {
+                name: 'propose_doc_edit',
+                description: 'Foreslå en linjeendring i docs (system-repo). Bruker må godkjenne før noe skrives til disk. Bruk når du vil oppdatere project_state.md, changelog.md eller decisions/.',
+                input_schema: {
+                    type: 'object' as const,
+                    properties: {
+                        file: { type: 'string', description: 'Relativ filsti fra system-repo-roten (f.eks. "project_state.md")' },
+                        old_line: { type: 'string', description: 'Eksakt linje som erstattes (tom streng = append til slutt)' },
+                        new_line: { type: 'string', description: 'Ny linje som erstatter (tom streng = slett linjen)' },
+                        reason: { type: 'string', description: 'Kort begrunnelse som vises til bruker' },
+                    },
+                    required: ['file', 'old_line', 'new_line', 'reason'],
+                },
+            },
         ];
     }
 
@@ -329,6 +384,16 @@ private toolGitBlame(filePath: string): string {
         if (name === 'git_blame') {
             return this.toolGitBlame(input.path);
         }
+        if (name === 'propose_doc_edit') {
+            this._webviewView?.webview.postMessage({
+                command: 'proposal',
+                file: input.file ?? '',
+                old_line: input.old_line ?? '',
+                new_line: input.new_line ?? '',
+                reason: input.reason ?? '',
+            });
+            return `PROPOSAL_SENT: Forslag sendt til bruker for godkjenning (${input.file}).`;
+        }
         return `ERROR: Ukjent tool: ${name}`;
     }
 
@@ -341,6 +406,7 @@ private toolGitBlame(filePath: string): string {
         if (name === 'git_diff') return `git_diff(${input.hash1}, ${input.hash2})`;
         if (name === 'git_diff_head') return `git_diff_head()`;
         if (name === 'git_blame') return `git_blame(${input.path})`;
+        if (name === 'propose_doc_edit') return `propose_doc_edit(${input.file})`;
         return name;
     }
 
@@ -363,6 +429,7 @@ private toolGitBlame(filePath: string): string {
         if (lastToolName === 'git_diff') return 'Analyserer endringer...';
         if (lastToolName === 'git_diff_head') return 'Ser på ucommittede endringer...';
         if (lastToolName === 'git_blame') return 'Analyserer linjehistorikk...';
+        if (lastToolName === 'propose_doc_edit') return 'Foreslår docs-oppdatering...';
         return 'Tenker...';
     }
 
@@ -825,6 +892,24 @@ Unngå emojier i svar. Bruk kun vanlig tekst.`;
     #messages::-webkit-scrollbar { width: 4px; }
     #messages::-webkit-scrollbar-track { background: transparent; }
     #messages::-webkit-scrollbar-thumb { background: #3a3a4a; border-radius: 4px; }
+
+    .proposal-card { margin-bottom: 16px; border: 1px solid #2e3a52; border-radius: 12px; overflow: hidden; font-size: 13px; }
+    .proposal-header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: #1a2235; color: #aac4f0; font-weight: 600; }
+    .proposal-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+    .proposal-file { padding: 6px 14px; background: #141a26; color: #667; font-family: monospace; font-size: 11px; border-bottom: 1px solid #1e2a3e; }
+    .proposal-line { padding: 6px 14px; font-family: monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+    .proposal-line.old { background: #2a1a1a; color: #f88; border-left: 3px solid #c44; }
+    .proposal-line.new { background: #1a2a1a; color: #8f8; border-left: 3px solid #4c4; }
+    .proposal-reason { padding: 8px 14px; color: #888; font-size: 12px; font-style: italic; border-top: 1px solid #1e2a3e; }
+    .proposal-actions { display: flex; gap: 8px; padding: 10px 14px; background: #141a26; border-top: 1px solid #1e2a3e; }
+    .proposal-btn { padding: 6px 14px; border-radius: 8px; border: none; font-size: 12px; cursor: pointer; font-family: Inter, system-ui, sans-serif; }
+    .proposal-btn.approve { background: #1a3a1a; color: #8f8; border: 1px solid #4c4; }
+    .proposal-btn.approve:hover { background: #1f4a1f; }
+    .proposal-btn.reject { background: #2a1a1a; color: #f88; border: 1px solid #c44; }
+    .proposal-btn.reject:hover { background: #3a1a1a; }
+    .proposal-status { padding: 10px 14px; font-size: 12px; background: #141a26; border-top: 1px solid #1e2a3e; }
+    .proposal-status.approved { color: #8f8; }
+    .proposal-status.rejected { color: #f88; }
     </style>
     </head>
     <body>
@@ -854,6 +939,21 @@ Unngå emojier i svar. Bruk kun vanlig tekst.`;
 
     <script>
     const vscode = acquireVsCodeApi();
+    var proposalCounter = 0;
+    var pendingProposals = {};
+    function escapeHtml(s) {
+        return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+    }
+    function approveProposal(pid, btn) {
+        btn.disabled = true;
+        btn.closest(".proposal-actions").querySelectorAll("button").forEach(function(b){ b.disabled = true; });
+        vscode.postMessage({ command: "proposal-approve", proposalId: pid, file: pendingProposals[pid].file, old_line: pendingProposals[pid].old_line, new_line: pendingProposals[pid].new_line });
+    }
+    function rejectProposal(pid, btn) {
+        btn.disabled = true;
+        btn.closest(".proposal-actions").querySelectorAll("button").forEach(function(b){ b.disabled = true; });
+        vscode.postMessage({ command: "proposal-reject", proposalId: pid });
+    }
     const messagesInner = document.getElementById("messages-inner");
     const messagesEl = document.getElementById("messages");
     const input = document.getElementById("input");
@@ -1168,6 +1268,38 @@ Unngå emojier i svar. Bruk kun vanlig tekst.`;
         activeText = "";
         activeSteps = [];
         loadingBubble = null;
+        }
+
+        if (msg.command === "proposal") {
+        var pid = proposalCounter++;
+        var card = document.createElement("div");
+        card.className = "proposal-card";
+        card.dataset.proposalId = pid;
+        card.innerHTML =
+            "<div class=\\"proposal-header\\"><span>\\uD83D\\uDCDD</span><span class=\\"proposal-title\\">Forslag til docs-endring</span></div>" +
+            "<div class=\\"proposal-file\\">" + escapeHtml(msg.file) + "</div>" +
+            (msg.old_line ? "<div class=\\"proposal-line old\\">\\u2212 " + escapeHtml(msg.old_line) + "</div>" : "") +
+            "<div class=\\"proposal-line new\\">+ " + escapeHtml(msg.new_line) + "</div>" +
+            "<div class=\\"proposal-reason\\">Grunn: " + escapeHtml(msg.reason) + "</div>" +
+            "<div class=\\"proposal-actions\\">" +
+            "<button class=\\"proposal-btn approve\\" onclick=\\"approveProposal(" + pid + ", this)\\">\\u2705 Godkjenn</button>" +
+            "<button class=\\"proposal-btn reject\\" onclick=\\"rejectProposal(" + pid + ", this)\\">\\u274C Avvis</button>" +
+            "</div>";
+        pendingProposals[pid] = { file: msg.file, old_line: msg.old_line, new_line: msg.new_line };
+        messagesInner.appendChild(card);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+
+        if (msg.command === "proposal-result") {
+        var card = messagesInner.querySelector("[data-proposal-id=\\"" + msg.proposalId + "\\"]");
+        if (!card) return;
+        var actions = card.querySelector(".proposal-actions");
+        if (actions) {
+            var statusEl = document.createElement("div");
+            statusEl.className = msg.ok ? "proposal-status approved" : "proposal-status rejected";
+            statusEl.textContent = msg.ok ? "\\u2705 Godkjent \\u2013 fil oppdatert" : ("\\u274C Feil: " + (msg.error || "Ukjent feil"));
+            actions.replaceWith(statusEl);
+        }
         }
 
         if (msg.command === "modelUpdated") {
