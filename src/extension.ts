@@ -86,7 +86,7 @@ export function activate(context: vscode.ExtensionContext) {
     console.log(`[ContextOS] system-repo: ${systemRepoPath}`);
 
     const serverScript = path.join(context.extensionPath, 'out', 'mcpServer.js');
-    mcpProcess = cp.spawn('node', [serverScript, systemRepoPath], {
+    mcpProcess = cp.spawn('node', [serverScript, systemRepoPath, workspaceRoot], {
         stdio: ['pipe', 'pipe', 'pipe'],
     });
     mcpProcess.stderr?.on('data', (data) => console.error(`[ContextOS MCP] ${data}`));
