@@ -8,6 +8,7 @@
     "type": "git",
     "url": "https://github.com/alexD1990/arcmesh-extension"
   },
+  "icon": "arcmesh-logo-128.png",
   "engines": {
     "vscode": "^1.109.0"
   },
