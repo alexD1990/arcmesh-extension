@@ -138,5 +138,37 @@ server.tool('search_code', 'Search for text across all files in the code reposit
     return { content: [{ type: 'text', text: results.join('\n') + truncated }] };
 });
 
+// ── Git tools ─────────────────────────────────────────────────────────────────
+
+function runGit(args: string): string {
+    const { execSync } = require('child_process');
+    try {
+        const out: Buffer = execSync(`git ${args}`, {
+            cwd: workspaceRoot,
+            timeout: 5000,
+            maxBuffer: 100 * 1024,
+        });
+        return out.toString('utf8').trim() || '(no output)';
+    } catch (e: any) {
+        return `ERROR: ${e.message ?? String(e)}`;
+    }
+}
+
+server.tool('git_log', 'Show recent git commits', { n: z.number().optional() }, async ({ n }) => {
+    return { content: [{ type: 'text', text: runGit(`log --oneline -${n ?? 20}`) }] };
+});
+
+server.tool('git_show', 'Show a specific commit', { hash: z.string() }, async ({ hash }) => {
+    return { content: [{ type: 'text', text: runGit(`show ${hash}`) }] };
+});
+
+server.tool('git_diff', 'Show diff between two commits', { hash1: z.string(), hash2: z.string() }, async ({ hash1, hash2 }) => {
+    return { content: [{ type: 'text', text: runGit(`diff ${hash1} ${hash2}`) }] };
+});
+
+server.tool('git_blame', 'Show who changed each line in a file', { path: z.string() }, async ({ path: filePath }) => {
+    return { content: [{ type: 'text', text: runGit(`blame ${filePath}`) }] };
+});
+
 const transport = new StdioServerTransport();
 server.connect(transport);
