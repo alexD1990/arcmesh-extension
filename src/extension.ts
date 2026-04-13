@@ -73,6 +73,16 @@ function ensureSystemRepo(workspaceRoot: string): string {
     return systemRepoPath;
 }
 
+function ensureGitignore(workspaceRoot: string) {
+    const gitignorePath = path.join(workspaceRoot, '.gitignore');
+    const entry = '.contextos/';
+    let content = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, 'utf8') : '';
+    if (content.split('\n').some(line => line.trim() === entry)) return;
+    const newline = content.length > 0 && !content.endsWith('\n') ? '\n' : '';
+    fs.writeFileSync(gitignorePath, content + newline + entry + '\n', 'utf8');
+    console.log(`[ContextOS] .gitignore oppdatert med ${entry}`);
+}
+
 function writeMcpJson(workspaceRoot: string, extensionPath: string, systemRepoPath: string) {
     const vscodeDir = path.join(workspaceRoot, '.vscode');
     if (!fs.existsSync(vscodeDir)) fs.mkdirSync(vscodeDir, { recursive: true });
@@ -154,6 +164,7 @@ export async function activate(context: vscode.ExtensionContext) {
     console.log(`[ContextOS] system-repo: ${systemRepoPath}`);
 
     writeMcpJson(workspaceRoot, context.extensionPath, systemRepoPath);
+    ensureGitignore(workspaceRoot);
 
     const serverScript = path.join(context.extensionPath, 'out', 'mcpServer.js');
     mcpProcess = cp.spawn('node', [serverScript, systemRepoPath, workspaceRoot], {
