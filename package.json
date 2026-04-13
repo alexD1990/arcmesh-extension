@@ -4,6 +4,10 @@
   "description": "Automatic MCP and git context for AI assistants",
   "version": "0.2.0",
   "publisher": "arcmesh",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alexD1990/arcmesh-extension"
+  },
   "engines": {
     "vscode": "^1.109.0"
   },
