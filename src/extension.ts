@@ -13,6 +13,9 @@ const PROJECT_MD_TEMPLATE = `# Project
 
 ## Tech Stack
 <!-- Teknisk stack -->
+
+## Status
+<!-- Nåværende status og neste steg -->
 `;
 
 const ARCHITECTURE_MD_TEMPLATE = `# Architecture
@@ -25,12 +28,19 @@ const ARCHITECTURE_MD_TEMPLATE = `# Architecture
 
 ## Data Flow
 <!-- Dataflyt gjennom systemet -->
+
+## Dependencies
+<!-- Eksterne avhengigheter og integrasjoner -->
 `;
 
-const STANDARDS_MD_TEMPLATE = `# Documentation Standards
+const STANDARDS_MD_TEMPLATE = `# Standards
 
-**Dato:** 2026-04-13
-**Status:** Godkjent
+## Dokumentasjonsregler
+
+- Ingenting overskrives – all historikk bevares
+- Datostemp alltid – format YYYY-MM-DD
+- En beslutning = én fil i \`decisions/\`
+- En komponent = én fil i \`components/\` med akkumulerte seksjoner
 
 ## Prioriteringsrekkefølge ved konflikt
 
@@ -39,13 +49,6 @@ const STANDARDS_MD_TEMPLATE = `# Documentation Standards
 3. \`components/\` – modulspesifikk trumfer generell
 4. \`project.md\` – overordnet retning
 5. \`changelog.md\` – historisk logg, ikke normativ
-
-## Skriveregler
-
-- Ingenting overskrives – all historikk bevares
-- Datostemp alltid – format YYYY-MM-DD
-- En beslutning = én fil i \`decisions/\`
-- En komponent = én fil i \`components/\` med akkumulerte seksjoner
 `;
 
 function ensureSystemRepo(workspaceRoot: string): string {
