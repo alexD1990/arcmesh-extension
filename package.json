@@ -1,8 +1,8 @@
 {
   "name": "contextos",
-  "displayName": "contextos",
-  "description": "AI-assisted project documentation for developers",
-  "version": "0.1.0",
+  "displayName": "ContextOS",
+  "description": "Automatic MCP and git context for AI assistants",
+  "version": "0.2.0",
   "publisher": "contextos",
   "engines": {
     "vscode": "^1.109.0"
@@ -14,74 +14,6 @@
     "onStartupFinished"
   ],
   "main": "./out/extension.js",
-  "contributes": {
-    "commands": [
-      {
-        "command": "contextos.helloWorld",
-        "title": "Hello World"
-      },
-      {
-        "command": "contextos.generateDocumentation",
-        "title": "ContextOS: Generate documentation"
-      },
-      {
-        "command": "contextos.explainProblem",
-        "title": "Forklar med ContextOS"
-      },
-      {
-        "command": "contextos.analyzeHistory",
-        "title": "ContextOS: Analyser prosjekthistorikk"
-      }
-    ],
-    "menus": {
-      "editor/context": [
-        {
-          "command": "contextos.explainProblem",
-          "when": "editorHasSelection || editorTextFocus",
-          "group": "navigation"
-        }
-      ]
-    },
-    "viewsContainers": {
-      "secondarySidebar": [
-        {
-          "id": "contextos-sidebar",
-          "title": "ContextOS",
-          "icon": "$(comment-discussion)"
-        }
-      ]
-    },
-    "views": {
-      "contextos-sidebar": [
-        {
-          "type": "webview",
-          "id": "contextos.chatView",
-          "name": "Chat",
-          "icon": "$(comment-discussion)"
-        }
-      ]
-    },
-    "configuration": {
-      "title": "ContextOS",
-      "properties": {
-        "contextos.apiKey": {
-          "type": "string",
-          "default": "",
-          "description": "Claude API key (Anthropic)"
-        },
-        "contextos.openaiApiKey": {
-          "type": "string",
-          "default": "",
-          "description": "OpenAI API key (GPT-4o)"
-        },
-        "contextos.googleApiKey": {
-          "type": "string",
-          "default": "",
-          "description": "Google API key (Gemini)"
-        }
-      }
-    }
-  },
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
@@ -91,7 +23,6 @@
     "test": "vscode-test"
   },
   "devDependencies": {
-    "@types/js-yaml": "^4.0.9",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
     "@types/vscode": "^1.109.0",
@@ -102,10 +33,7 @@
     "typescript-eslint": "^8.54.0"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
-    "@google/generative-ai": "^0.24.1",
     "@modelcontextprotocol/sdk": "^1.27.1",
-    "js-yaml": "^4.1.1",
-    "openai": "^6.25.0"
+    "zod": "^3.23.8"
   }
 }
