@@ -15,7 +15,7 @@ if (!systemRepoPath || !workspaceRoot) {
 const EXCLUDED = new Set(['.git', 'node_modules', 'out', 'dist', '.next', '__pycache__']);
 
 const server = new McpServer({
-    name: 'contextos',
+    name: 'arcmesh',
     version: '0.2.0',
 });
 

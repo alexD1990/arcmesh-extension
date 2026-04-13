@@ -1,9 +1,9 @@
 {
-  "name": "contextos",
-  "displayName": "ContextOS",
+  "name": "arcmesh",
+  "displayName": "ArcMesh",
   "description": "Automatic MCP and git context for AI assistants",
   "version": "0.2.0",
-  "publisher": "contextos",
+  "publisher": "arcmesh",
   "engines": {
     "vscode": "^1.109.0"
   },
@@ -28,6 +28,7 @@
     "@types/vscode": "^1.109.0",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.7.1",
     "eslint": "^9.39.2",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.54.0"

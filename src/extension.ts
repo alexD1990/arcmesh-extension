@@ -6,53 +6,53 @@ import * as cp from 'child_process';
 const PROJECT_MD_TEMPLATE = `# Project
 
 ## Description
-<!-- Beskriv prosjektet her -->
+<!-- Describe the project here -->
 
 ## Goals
-<!-- Hva er målet med prosjektet? -->
+<!-- What is the goal of the project? -->
 
 ## Tech Stack
-<!-- Teknisk stack -->
+<!-- Technical stack -->
 
 ## Status
-<!-- Nåværende status og neste steg -->
+<!-- Current status and next steps -->
 `;
 
 const ARCHITECTURE_MD_TEMPLATE = `# Architecture
 
 ## Overview
-<!-- Overordnet arkitektur -->
+<!-- High-level architecture -->
 
 ## Key Components
-<!-- Viktige komponenter og deres ansvar -->
+<!-- Key components and their responsibilities -->
 
 ## Data Flow
-<!-- Dataflyt gjennom systemet -->
+<!-- Data flow through the system -->
 
 ## Dependencies
-<!-- Eksterne avhengigheter og integrasjoner -->
+<!-- External dependencies and integrations -->
 `;
 
 const STANDARDS_MD_TEMPLATE = `# Standards
 
-## Dokumentasjonsregler
+## Documentation Rules
 
-- Ingenting overskrives – all historikk bevares
-- Datostemp alltid – format YYYY-MM-DD
-- En beslutning = én fil i \`decisions/\`
-- En komponent = én fil i \`components/\` med akkumulerte seksjoner
+- Nothing is overwritten – all history is preserved
+- Always timestamp – format YYYY-MM-DD
+- One decision = one file in \`decisions/\`
+- One component = one file in \`components/\` with accumulated sections
 
-## Prioriteringsrekkefølge ved konflikt
+## Conflict Resolution Priority
 
-1. \`decisions/\` – eksplisitt beslutning trumfer alltid
-2. \`architecture.md\` – teknisk presisjon trumfer retning
-3. \`components/\` – modulspesifikk trumfer generell
-4. \`project.md\` – overordnet retning
-5. \`changelog.md\` – historisk logg, ikke normativ
+1. \`decisions/\` – explicit decision always wins
+2. \`architecture.md\` – technical precision over direction
+3. \`components/\` – module-specific over general
+4. \`project.md\` – overall direction
+5. \`changelog.md\` – historical log, not normative
 `;
 
 function ensureSystemRepo(workspaceRoot: string): string {
-    const systemRepoPath = path.join(workspaceRoot, '.contextos', 'system-repo');
+    const systemRepoPath = path.join(workspaceRoot, '.arcmesh', 'system-repo');
     const dirs = [
         systemRepoPath,
         path.join(systemRepoPath, 'decisions'),
@@ -75,12 +75,12 @@ function ensureSystemRepo(workspaceRoot: string): string {
 
 function ensureGitignore(workspaceRoot: string) {
     const gitignorePath = path.join(workspaceRoot, '.gitignore');
-    const entry = '.contextos/';
+    const entry = '.arcmesh/';
     let content = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, 'utf8') : '';
     if (content.split('\n').some(line => line.trim() === entry)) return;
     const newline = content.length > 0 && !content.endsWith('\n') ? '\n' : '';
     fs.writeFileSync(gitignorePath, content + newline + entry + '\n', 'utf8');
-    console.log(`[ContextOS] .gitignore oppdatert med ${entry}`);
+    console.log(`[ArcMesh] .gitignore updated with ${entry}`);
 }
 
 function writeMcpJson(workspaceRoot: string, extensionPath: string, systemRepoPath: string) {
@@ -90,7 +90,7 @@ function writeMcpJson(workspaceRoot: string, extensionPath: string, systemRepoPa
     const serverScript = path.join(extensionPath, 'out', 'mcpServer.js');
     const config = {
         servers: {
-            contextos: {
+            arcmesh: {
                 type: 'stdio',
                 command: 'node',
                 args: [serverScript, systemRepoPath, workspaceRoot],
@@ -98,7 +98,7 @@ function writeMcpJson(workspaceRoot: string, extensionPath: string, systemRepoPa
         },
     };
     fs.writeFileSync(mcpJsonPath, JSON.stringify(config, null, 2), 'utf8');
-    console.log(`[ContextOS] mcp.json skrevet: ${mcpJsonPath}`);
+    console.log(`[ArcMesh] mcp.json written: ${mcpJsonPath}`);
 }
 
 async function runOnboarding(workspaceRoot: string): Promise<boolean> {
@@ -106,20 +106,20 @@ async function runOnboarding(workspaceRoot: string): Promise<boolean> {
 
     const items = [
         {
-            label: '$(repo) Koble til eksisterende repo',
-            description: hasGit ? 'Fant .git i workspace' : 'Ingen .git funnet – vil kun sette opp ContextOS',
+            label: '$(repo) Connect to existing repo',
+            description: hasGit ? 'Found .git in workspace' : 'No .git found – will only set up ArcMesh',
             action: 'existing' as const,
         },
         {
-            label: '$(add) Opprett nytt repo',
-            description: 'Kjører git init i workspace',
+            label: '$(add) Create new repo',
+            description: 'Runs git init in workspace',
             action: 'init' as const,
         },
     ];
 
     const picked = await vscode.window.showQuickPick(items, {
-        title: 'ContextOS – Velkommen',
-        placeHolder: 'Hvordan vil du sette opp dette prosjektet?',
+        title: 'ArcMesh – Welcome',
+        placeHolder: 'How would you like to set up this project?',
         ignoreFocusOut: true,
     });
 
@@ -129,9 +129,9 @@ async function runOnboarding(workspaceRoot: string): Promise<boolean> {
         const { execSync } = require('child_process');
         try {
             execSync('git init', { cwd: workspaceRoot });
-            vscode.window.showInformationMessage('ContextOS: git init fullført.');
+            vscode.window.showInformationMessage('ArcMesh: git init completed.');
         } catch (e: any) {
-            vscode.window.showErrorMessage(`ContextOS: git init feilet – ${e.message}`);
+            vscode.window.showErrorMessage(`ArcMesh: git init failed – ${e.message}`);
             return false;
         }
     }
@@ -142,16 +142,16 @@ async function runOnboarding(workspaceRoot: string): Promise<boolean> {
 let mcpProcess: cp.ChildProcess | undefined;
 
 export async function activate(context: vscode.ExtensionContext) {
-    console.log('[ContextOS] Aktivert.');
+    console.log('[ArcMesh] Activated.');
 
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders || workspaceFolders.length === 0) {
-        console.log('[ContextOS] Ingen workspace – avbryter.');
+        console.log('[ArcMesh] No workspace – aborting.');
         return;
     }
 
     const workspaceRoot = workspaceFolders[0].uri.fsPath;
-    const onboardingKey = 'contextos.onboardingComplete';
+    const onboardingKey = 'arcmesh.onboardingComplete';
     const onboardingDone = context.globalState.get<boolean>(onboardingKey);
 
     if (!onboardingDone) {
@@ -161,7 +161,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }
 
     const systemRepoPath = ensureSystemRepo(workspaceRoot);
-    console.log(`[ContextOS] system-repo: ${systemRepoPath}`);
+    console.log(`[ArcMesh] system-repo: ${systemRepoPath}`);
 
     writeMcpJson(workspaceRoot, context.extensionPath, systemRepoPath);
     ensureGitignore(workspaceRoot);
@@ -170,16 +170,16 @@ export async function activate(context: vscode.ExtensionContext) {
     mcpProcess = cp.spawn('node', [serverScript, systemRepoPath, workspaceRoot], {
         stdio: ['pipe', 'pipe', 'pipe'],
     });
-    mcpProcess.stderr?.on('data', (data) => console.error(`[ContextOS MCP] ${data}`));
-    mcpProcess.on('exit', (code) => console.log(`[ContextOS MCP] exited with code ${code}`));
+    mcpProcess.stderr?.on('data', (data) => console.error(`[ArcMesh MCP] ${data}`));
+    mcpProcess.on('exit', (code) => console.log(`[ArcMesh MCP] exited with code ${code}`));
 
     const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    statusBar.text = '$(check) ContextOS';
-    statusBar.tooltip = 'ContextOS aktiv';
+    statusBar.text = '$(check) ArcMesh';
+    statusBar.tooltip = 'ArcMesh active';
     statusBar.show();
     context.subscriptions.push(statusBar);
 
-    vscode.window.showInformationMessage('ContextOS klar – åpne Copilot Chat og spør om prosjektet ditt.');
+    vscode.window.showInformationMessage('ArcMesh ready – open Copilot Chat and ask about your project.');
 }
 
 export function deactivate() {
