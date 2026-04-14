@@ -101,42 +101,73 @@ function writeMcpJson(workspaceRoot: string, extensionPath: string, systemRepoPa
     console.log(`[ArcMesh] mcp.json written: ${mcpJsonPath}`);
 }
 
-async function runOnboarding(workspaceRoot: string): Promise<boolean> {
-    const hasGit = fs.existsSync(path.join(workspaceRoot, '.git'));
+function isGitInstalled(): boolean {
+    try {
+        const { execSync } = require('child_process');
+        execSync('git --version', { stdio: 'ignore' });
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+type GitState = 'git-ready' | 'skip' | 'no-git';
+
+async function detectGitState(
+    workspaceRoot: string,
+    workspaceState: vscode.Memento
+): Promise<GitState> {
+    if (!isGitInstalled()) {
+        vscode.window.showInformationMessage(
+            'ArcMesh: Git is not installed. Install it from git-scm.com to enable full functionality.',
+            'Get Git'
+        ).then(choice => {
+            if (choice === 'Get Git') {
+                vscode.env.openExternal(vscode.Uri.parse('https://git-scm.com'));
+            }
+        });
+        return 'no-git';
+    }
+
+    if (fs.existsSync(path.join(workspaceRoot, '.git'))) {
+        return 'git-ready';
+    }
+
+    if (workspaceState.get<boolean>('arcmesh.skipGitPrompt') === true) {
+        return 'skip';
+    }
 
     const items = [
-        {
-            label: '$(repo) Connect to existing repo',
-            description: hasGit ? 'Found .git in workspace' : 'No .git found – will only set up ArcMesh',
-            action: 'existing' as const,
-        },
-        {
-            label: '$(add) Create new repo',
-            description: 'Runs git init in workspace',
-            action: 'init' as const,
-        },
+        { label: 'Yes – run git init', action: 'init' as const },
+        { label: 'No', action: 'no' as const },
+        { label: "Don't ask again", action: 'never' as const },
     ];
 
     const picked = await vscode.window.showQuickPick(items, {
-        title: 'ArcMesh – Welcome',
-        placeHolder: 'How would you like to set up this project?',
+        title: 'ArcMesh – Git not found',
+        placeHolder: 'This workspace has no git repository. Initialize one?',
         ignoreFocusOut: true,
     });
 
-    if (!picked) return false;
-
-    if (picked.action === 'init') {
-        const { execSync } = require('child_process');
-        try {
-            execSync('git init', { cwd: workspaceRoot });
-            vscode.window.showInformationMessage('ArcMesh: git init completed.');
-        } catch (e: any) {
-            vscode.window.showErrorMessage(`ArcMesh: git init failed – ${e.message}`);
-            return false;
-        }
+    if (!picked || picked.action === 'no') {
+        return 'skip';
     }
 
-    return true;
+    if (picked.action === 'never') {
+        await workspaceState.update('arcmesh.skipGitPrompt', true);
+        return 'skip';
+    }
+
+    // picked.action === 'init'
+    try {
+        const { execSync } = require('child_process');
+        execSync('git init', { cwd: workspaceRoot });
+    } catch (e: any) {
+        vscode.window.showErrorMessage(`ArcMesh: git init failed – ${e.message}`);
+        return 'skip';
+    }
+
+    return 'git-ready';
 }
 
 let mcpProcess: cp.ChildProcess | undefined;
@@ -151,17 +182,11 @@ export async function activate(context: vscode.ExtensionContext) {
     }
 
     const workspaceRoot = workspaceFolders[0].uri.fsPath;
-    const onboardingKey = 'arcmesh.onboardingComplete';
-    const onboardingDone = context.globalState.get<boolean>(onboardingKey);
-
-    if (!onboardingDone) {
-        const ok = await runOnboarding(workspaceRoot);
-        if (!ok) return;
-        await context.globalState.update(onboardingKey, true);
-    }
 
     const systemRepoPath = ensureSystemRepo(workspaceRoot);
     console.log(`[ArcMesh] system-repo: ${systemRepoPath}`);
+
+    const gitState = await detectGitState(workspaceRoot, context.workspaceState);
 
     writeMcpJson(workspaceRoot, context.extensionPath, systemRepoPath);
     ensureGitignore(workspaceRoot);
@@ -174,7 +199,7 @@ export async function activate(context: vscode.ExtensionContext) {
     mcpProcess.on('exit', (code) => console.log(`[ArcMesh MCP] exited with code ${code}`));
 
     const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    statusBar.text = '$(check) ArcMesh';
+    statusBar.text = gitState === 'git-ready' ? '$(check) ArcMesh + Git' : '$(check) ArcMesh';
     statusBar.tooltip = 'ArcMesh active';
     statusBar.show();
     context.subscriptions.push(statusBar);
