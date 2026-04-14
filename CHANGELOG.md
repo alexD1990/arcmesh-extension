@@ -2,6 +2,22 @@
 
 All notable changes to ArcMesh will be documented in this file.
 
+## [0.2.2] - 2026-04-14
+
+### Changed
+- Replaced one-time onboarding wizard with `detectGitState` on every activation
+- Git prompt now uses per-workspace "Don't ask again" state instead of global flag
+- Status bar shows `ArcMesh + Git` when git is available, `ArcMesh` otherwise
+
+### Fixed
+- No longer blocks activation permanently if onboarding was skipped
+- Informational message with "Get Git" link shown when git is not installed
+
+## [0.2.1] - 2026-04-13
+
+### Added
+- Extension logo
+
 ## [0.2.0] - 2026-04-13
 
 ### Added
