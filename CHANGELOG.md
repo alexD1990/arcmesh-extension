@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.3] - 2026-04-16
+
+### Added
+- Five new MCP tools for git operations on system-repo: `system_repo_git_status`, `system_repo_git_add`, `system_repo_git_commit`, `system_repo_git_push`, `system_repo_git_pull`
+
+### Changed
+- `mcpServer.ts` now has a dedicated `runGitSystemRepo` helper scoped to `systemRepoPath`, mirroring the existing `runGit` helper for the code repository
+
 All notable changes to ArcMesh will be documented in this file.
 
 ## [0.2.2] - 2026-04-14
