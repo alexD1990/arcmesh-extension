@@ -170,5 +170,41 @@ server.tool('git_blame', 'Show who changed each line in a file', { path: z.strin
     return { content: [{ type: 'text', text: runGit(`blame ${filePath}`) }] };
 });
 
+// ── System-repo git tools ─────────────────────────────────────────────────────
+
+function runGitSystemRepo(args: string): string {
+    const { execSync } = require('child_process');
+    try {
+        const out: Buffer = execSync(`git ${args}`, {
+            cwd: systemRepoPath,
+            timeout: 5000,
+            maxBuffer: 100 * 1024,
+        });
+        return out.toString('utf8').trim() || '(no output)';
+    } catch (e: any) {
+        return `ERROR: ${e.message ?? String(e)}`;
+    }
+}
+
+server.tool('system_repo_git_status', 'Show current git status for the system repo', {}, async () => {
+    return { content: [{ type: 'text', text: runGitSystemRepo('status') }] };
+});
+
+server.tool('system_repo_git_add', 'Stage all changes in the system repo', {}, async () => {
+    return { content: [{ type: 'text', text: runGitSystemRepo('add -A') }] };
+});
+
+server.tool('system_repo_git_commit', 'Commit staged changes in the system repo', { message: z.string() }, async ({ message }) => {
+    return { content: [{ type: 'text', text: runGitSystemRepo(`commit -m ${JSON.stringify(message)}`) }] };
+});
+
+server.tool('system_repo_git_push', 'Push system repo to remote', {}, async () => {
+    return { content: [{ type: 'text', text: runGitSystemRepo('push') }] };
+});
+
+server.tool('system_repo_git_pull', 'Pull latest from remote into system repo', {}, async () => {
+    return { content: [{ type: 'text', text: runGitSystemRepo('pull') }] };
+});
+
 const transport = new StdioServerTransport();
 server.connect(transport);
