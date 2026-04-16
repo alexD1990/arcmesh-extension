@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.4] - 2026-04-16
+
+### Changed
+- Lazy activation: nothing runs on startup except statusbar showing `$(circle-slash) ArcMesh`
+- Click on statusbar triggers `ensureSystemRepo`, `writeMcpJson`, `detectGitState`
+- Statusbar updates to `$(check) ArcMesh` after successful activation
+- Switched build from `tsc` to `esbuild` — all dependencies bundled into `out/`, no `npm install` needed post-install
+
+### Added
+- `STANDARDS.md` section documenting system-repo location and absolute path requirement for MCP server args
+
 ## [0.2.3] - 2026-04-16
 
 ### Added
