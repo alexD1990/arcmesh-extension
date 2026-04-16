@@ -49,6 +49,12 @@ const STANDARDS_MD_TEMPLATE = `# Standards
 3. \`components/\` – module-specific over general
 4. \`project.md\` – overall direction
 5. \`changelog.md\` – historical log, not normative
+
+## System-Repo Location
+
+- The system-repo is always located at \`<workspaceRoot>/.arcmesh/system-repo/\`
+- All paths passed to MCP server args MUST be absolute
+- Relative paths are forbidden in \`mcp.json\` server args
 `;
 
 function ensureSystemRepo(workspaceRoot: string): string {
@@ -80,7 +86,6 @@ function ensureGitignore(workspaceRoot: string) {
     if (content.split('\n').some(line => line.trim() === entry)) return;
     const newline = content.length > 0 && !content.endsWith('\n') ? '\n' : '';
     fs.writeFileSync(gitignorePath, content + newline + entry + '\n', 'utf8');
-    console.log(`[ArcMesh] .gitignore updated with ${entry}`);
 }
 
 function writeMcpJson(workspaceRoot: string, extensionPath: string, systemRepoPath: string) {
@@ -98,13 +103,11 @@ function writeMcpJson(workspaceRoot: string, extensionPath: string, systemRepoPa
         },
     };
     fs.writeFileSync(mcpJsonPath, JSON.stringify(config, null, 2), 'utf8');
-    console.log(`[ArcMesh] mcp.json written: ${mcpJsonPath}`);
 }
 
 function isGitInstalled(): boolean {
     try {
-        const { execSync } = require('child_process');
-        execSync('git --version', { stdio: 'ignore' });
+        cp.execSync('git --version', { stdio: 'ignore' });
         return true;
     } catch {
         return false;
@@ -149,19 +152,15 @@ async function detectGitState(
         ignoreFocusOut: true,
     });
 
-    if (!picked || picked.action === 'no') {
-        return 'skip';
-    }
+    if (!picked || picked.action === 'no') return 'skip';
 
     if (picked.action === 'never') {
         await workspaceState.update('arcmesh.skipGitPrompt', true);
         return 'skip';
     }
 
-    // picked.action === 'init'
     try {
-        const { execSync } = require('child_process');
-        execSync('git init', { cwd: workspaceRoot });
+        cp.execSync('git init', { cwd: workspaceRoot });
     } catch (e: any) {
         vscode.window.showErrorMessage(`ArcMesh: git init failed – ${e.message}`);
         return 'skip';
@@ -175,36 +174,44 @@ let mcpProcess: cp.ChildProcess | undefined;
 export async function activate(context: vscode.ExtensionContext) {
     console.log('[ArcMesh] Activated.');
 
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (!workspaceFolders || workspaceFolders.length === 0) {
-        console.log('[ArcMesh] No workspace – aborting.');
-        return;
-    }
-
-    const workspaceRoot = workspaceFolders[0].uri.fsPath;
-
-    const systemRepoPath = ensureSystemRepo(workspaceRoot);
-    console.log(`[ArcMesh] system-repo: ${systemRepoPath}`);
-
-    const gitState = await detectGitState(workspaceRoot, context.workspaceState);
-
-    writeMcpJson(workspaceRoot, context.extensionPath, systemRepoPath);
-    ensureGitignore(workspaceRoot);
-
-    const serverScript = path.join(context.extensionPath, 'out', 'mcpServer.js');
-    mcpProcess = cp.spawn('node', [serverScript, systemRepoPath, workspaceRoot], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    mcpProcess.stderr?.on('data', (data) => console.error(`[ArcMesh MCP] ${data}`));
-    mcpProcess.on('exit', (code) => console.log(`[ArcMesh MCP] exited with code ${code}`));
-
     const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    statusBar.text = gitState === 'git-ready' ? '$(check) ArcMesh + Git' : '$(check) ArcMesh';
-    statusBar.tooltip = 'ArcMesh active';
+    statusBar.text = '$(circle-slash) ArcMesh';
+    statusBar.tooltip = 'ArcMesh – click to activate';
+    statusBar.command = 'arcmesh.activate';
     statusBar.show();
     context.subscriptions.push(statusBar);
 
-    vscode.window.showInformationMessage('ArcMesh ready – open Copilot Chat and ask about your project.');
+    const cmd = vscode.commands.registerCommand('arcmesh.activate', async () => {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders || workspaceFolders.length === 0) {
+            vscode.window.showWarningMessage('ArcMesh: No workspace folder open.');
+            return;
+        }
+
+        const workspaceRoot = workspaceFolders[0].uri.fsPath;
+
+        const systemRepoPath = ensureSystemRepo(workspaceRoot);
+        writeMcpJson(workspaceRoot, context.extensionPath, systemRepoPath);
+        ensureGitignore(workspaceRoot);
+
+        const gitState = await detectGitState(workspaceRoot, context.workspaceState);
+
+        const serverScript = path.join(context.extensionPath, 'out', 'mcpServer.js');
+        if (mcpProcess) mcpProcess.kill();
+        mcpProcess = cp.spawn('node', [serverScript, systemRepoPath, workspaceRoot], {
+            stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        mcpProcess.stderr?.on('data', (data) => console.error(`[ArcMesh MCP] ${data}`));
+        mcpProcess.on('exit', (code) => console.log(`[ArcMesh MCP] exited with code ${code}`));
+
+        statusBar.text = gitState === 'git-ready' ? '$(check) ArcMesh + Git' : '$(check) ArcMesh';
+        statusBar.tooltip = 'ArcMesh active';
+        statusBar.command = undefined;
+
+        vscode.window.showInformationMessage('ArcMesh ready – open Copilot Chat and ask about your project.');
+    });
+
+    context.subscriptions.push(cmd);
 }
 
 export function deactivate() {
