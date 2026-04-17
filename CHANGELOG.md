@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.5] - 2026-04-17
+
+### Added
+- `trySyncToCloud(workspaceRoot)` i `extension.ts` – portert fra `mcpServer.ts` for bruk i extension-kontekst
+- Statusbar-knapp `$(cloud-upload) ArcMesh Sync` – vises kun når `cloud.json` og `.cloud-token` finnes
+- `arcmesh.syncNow`-kommando – trigger manuell sync med animasjon: `Syncing...` → `Synced` (3 sek) → tilbake
+- `configureCloudSync` viser sync-knappen umiddelbart etter lagring uten restart
+
+### Changed
+- `STANDARDS.md`-template oppdatert med dokumentasjon av `cloud.json` og `.cloud-token`
+
 ## [0.2.4] - 2026-04-16
 
 ### Changed

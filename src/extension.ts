@@ -177,6 +177,81 @@ async function detectGitState(
     return 'git-ready';
 }
 
+async function trySyncToCloud(workspaceRoot: string): Promise<void> {
+    const configPath = path.join(workspaceRoot, '.arcmesh', 'cloud.json');
+    if (!fs.existsSync(configPath)) return;
+
+    let cloudUrl: string;
+    try {
+        const raw = fs.readFileSync(configPath, 'utf8');
+        const cfg = JSON.parse(raw);
+        if (!cfg.cloudUrl || typeof cfg.cloudUrl !== 'string') return;
+        cloudUrl = cfg.cloudUrl.replace(/\/$/, '');
+    } catch {
+        console.error('[ArcMesh] cloud.json parse error – skipping sync');
+        return;
+    }
+
+    const tokenPath = path.join(workspaceRoot, '.arcmesh', '.cloud-token');
+    if (!fs.existsSync(tokenPath)) {
+        console.error('[ArcMesh] No cloud token found – skipping sync');
+        return;
+    }
+    const token = fs.readFileSync(tokenPath, 'utf8').trim();
+    if (!token) return;
+
+    const systemRepoPath = path.join(workspaceRoot, '.arcmesh', 'system-repo');
+    const files: Record<string, string> = {};
+    function collectFiles(dir: string) {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            if (entry.name === '.git') continue;
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) collectFiles(full);
+            else {
+                try {
+                    files[path.relative(systemRepoPath, full)] = fs.readFileSync(full, 'utf8');
+                } catch { /* skip unreadable */ }
+            }
+        }
+    }
+    collectFiles(systemRepoPath);
+
+    try {
+        const https = await import('https');
+        const http = await import('http');
+        const body = JSON.stringify({ files });
+        const url = new URL(`${cloudUrl}/api/sync`);
+        const options = {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+                'Content-Length': Buffer.byteLength(body),
+            },
+        };
+        const transport = url.protocol === 'https:' ? https.default : http.default;
+        await new Promise<void>((resolve) => {
+            const req = transport.request(url, options, (res) => {
+                console.log(`[ArcMesh] Cloud sync: ${res.statusCode}`);
+                resolve();
+            });
+            req.on('error', (e: Error) => {
+                console.error(`[ArcMesh] Cloud sync error: ${e.message}`);
+                resolve();
+            });
+            req.setTimeout(10000, () => {
+                console.error('[ArcMesh] Cloud sync timeout');
+                req.destroy();
+                resolve();
+            });
+            req.write(body);
+            req.end();
+        });
+    } catch (e: any) {
+        console.error(`[ArcMesh] Cloud sync failed: ${e.message}`);
+    }
+}
+
 let mcpProcess: cp.ChildProcess | undefined;
 
 export async function activate(context: vscode.ExtensionContext) {
@@ -188,6 +263,38 @@ export async function activate(context: vscode.ExtensionContext) {
     statusBar.command = 'arcmesh.activate';
     statusBar.show();
     context.subscriptions.push(statusBar);
+
+    const syncBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
+    syncBar.text = '$(cloud-upload) ArcMesh Sync';
+    syncBar.tooltip = 'ArcMesh – sync to cloud now';
+    syncBar.command = 'arcmesh.syncNow';
+    context.subscriptions.push(syncBar);
+
+    function updateSyncBar() {
+        const folders = vscode.workspace.workspaceFolders;
+        if (!folders || folders.length === 0) { syncBar.hide(); return; }
+        const configPath = path.join(folders[0].uri.fsPath, '.arcmesh', 'cloud.json');
+        const tokenPath = path.join(folders[0].uri.fsPath, '.arcmesh', '.cloud-token');
+        if (fs.existsSync(configPath) && fs.existsSync(tokenPath)) {
+            syncBar.show();
+        } else {
+            syncBar.hide();
+        }
+    }
+    updateSyncBar();
+
+    const syncCmd = vscode.commands.registerCommand('arcmesh.syncNow', async () => {
+        const folders = vscode.workspace.workspaceFolders;
+        if (!folders || folders.length === 0) return;
+        const workspaceRoot = folders[0].uri.fsPath;
+        syncBar.text = '$(sync~spin) Syncing...';
+        await trySyncToCloud(workspaceRoot);
+        syncBar.text = '$(check) Synced';
+        setTimeout(() => {
+            syncBar.text = '$(cloud-upload) ArcMesh Sync';
+        }, 3000);
+    });
+    context.subscriptions.push(syncCmd);
 
     const cmd = vscode.commands.registerCommand('arcmesh.activate', async () => {
         const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -258,6 +365,7 @@ export async function activate(context: vscode.ExtensionContext) {
         );
 
         vscode.window.showInformationMessage('ArcMesh: Cloud sync configured.');
+        updateSyncBar();
     });
 
     context.subscriptions.push(cmd);
