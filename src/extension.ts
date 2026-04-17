@@ -55,6 +55,14 @@ const STANDARDS_MD_TEMPLATE = `# Standards
 - The system-repo is always located at \`<workspaceRoot>/.arcmesh/system-repo/\`
 - All paths passed to MCP server args MUST be absolute
 - Relative paths are forbidden in \`mcp.json\` server args
+
+## Cloud Sync Config
+
+- \`.arcmesh/cloud.json\` – inneholder \`cloudUrl\` (ikke sensitiv, ikke versjonskontrollert)
+- \`.arcmesh/.cloud-token\` – API-token (sensitiv, ikke versjonskontrollert)
+- Begge filer dekkes av \`.arcmesh/\`-oppføringen i \`.gitignore\`
+- Format for \`cloud.json\`: \`{ "cloudUrl": "https://..." }\`
+- Konfigureres via kommandoen \`ArcMesh: Configure Cloud Sync\`
 `;
 
 function ensureSystemRepo(workspaceRoot: string): string {
@@ -211,7 +219,49 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage('ArcMesh ready – open Copilot Chat and ask about your project.');
     });
 
+    const cloudCmd = vscode.commands.registerCommand('arcmesh.configureCloudSync', async () => {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders || workspaceFolders.length === 0) {
+            vscode.window.showWarningMessage('ArcMesh: No workspace folder open.');
+            return;
+        }
+        const workspaceRoot = workspaceFolders[0].uri.fsPath;
+
+        const cloudUrl = await vscode.window.showInputBox({
+            title: 'ArcMesh Cloud Sync – URL',
+            prompt: 'Enter your ArcMesh Cloud URL',
+            placeHolder: 'https://cloud.arcmesh.io',
+            ignoreFocusOut: true,
+        });
+        if (!cloudUrl) return;
+
+        const token = await vscode.window.showInputBox({
+            title: 'ArcMesh Cloud Sync – Token',
+            prompt: 'Enter your API token',
+            password: true,
+            ignoreFocusOut: true,
+        });
+        if (!token) return;
+
+        const arcmeshDir = path.join(workspaceRoot, '.arcmesh');
+        fs.mkdirSync(arcmeshDir, { recursive: true });
+
+        fs.writeFileSync(
+            path.join(arcmeshDir, 'cloud.json'),
+            JSON.stringify({ cloudUrl }, null, 2),
+            'utf8'
+        );
+        fs.writeFileSync(
+            path.join(arcmeshDir, '.cloud-token'),
+            token,
+            'utf8'
+        );
+
+        vscode.window.showInformationMessage('ArcMesh: Cloud sync configured.');
+    });
+
     context.subscriptions.push(cmd);
+    context.subscriptions.push(cloudCmd);
 }
 
 export function deactivate() {

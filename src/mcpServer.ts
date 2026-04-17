@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import * as fs from 'fs';
 import * as path from 'path';
+import { execSync } from 'child_process';
 import { z } from 'zod';
 
 const systemRepoPath = process.argv[2];
@@ -141,7 +142,6 @@ server.tool('search_code', 'Search for text across all files in the code reposit
 // ── Git tools ─────────────────────────────────────────────────────────────────
 
 function runGit(args: string): string {
-    const { execSync } = require('child_process');
     try {
         const out: Buffer = execSync(`git ${args}`, {
             cwd: workspaceRoot,
@@ -173,7 +173,6 @@ server.tool('git_blame', 'Show who changed each line in a file', { path: z.strin
 // ── System-repo git tools ─────────────────────────────────────────────────────
 
 function runGitSystemRepo(args: string): string {
-    const { execSync } = require('child_process');
     try {
         const out: Buffer = execSync(`git ${args}`, {
             cwd: systemRepoPath,
@@ -186,6 +185,80 @@ function runGitSystemRepo(args: string): string {
     }
 }
 
+async function trySyncToCloud(): Promise<void> {
+    const configPath = path.join(workspaceRoot, '.arcmesh', 'cloud.json');
+    if (!fs.existsSync(configPath)) return;
+
+    let cloudUrl: string;
+    try {
+        const raw = fs.readFileSync(configPath, 'utf8');
+        const cfg = JSON.parse(raw);
+        if (!cfg.cloudUrl || typeof cfg.cloudUrl !== 'string') return;
+        cloudUrl = cfg.cloudUrl.replace(/\/$/, '');
+    } catch {
+        process.stderr.write('[ArcMesh] cloud.json parse error – skipping sync\n');
+        return;
+    }
+
+    const tokenPath = path.join(workspaceRoot, '.arcmesh', '.cloud-token');
+    if (!fs.existsSync(tokenPath)) {
+        process.stderr.write('[ArcMesh] No cloud token found – skipping sync\n');
+        return;
+    }
+    const token = fs.readFileSync(tokenPath, 'utf8').trim();
+    if (!token) return;
+
+    const files: Record<string, string> = {};
+    function collectFiles(dir: string) {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            if (entry.name === '.git') continue;
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) collectFiles(full);
+            else {
+                try {
+                    files[path.relative(systemRepoPath, full)] = fs.readFileSync(full, 'utf8');
+                } catch { /* skip unreadable */ }
+            }
+        }
+    }
+    collectFiles(systemRepoPath);
+
+    try {
+        const { default: https } = await import('https');
+        const { default: http } = await import('http');
+        const body = JSON.stringify({ files });
+        const url = new URL(`${cloudUrl}/api/sync`);
+        const options = {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+                'Content-Length': Buffer.byteLength(body),
+            },
+        };
+        const transport = url.protocol === 'https:' ? https : http;
+        await new Promise<void>((resolve) => {
+            const req = transport.request(url, options, (res) => {
+                process.stderr.write(`[ArcMesh] Cloud sync: ${res.statusCode}\n`);
+                resolve();
+            });
+            req.on('error', (e) => {
+                process.stderr.write(`[ArcMesh] Cloud sync error: ${e.message}\n`);
+                resolve();
+            });
+            req.setTimeout(10000, () => {
+                process.stderr.write('[ArcMesh] Cloud sync timeout\n');
+                req.destroy();
+                resolve();
+            });
+            req.write(body);
+            req.end();
+        });
+    } catch (e: any) {
+        process.stderr.write(`[ArcMesh] Cloud sync failed: ${e.message}\n`);
+    }
+}
+
 server.tool('system_repo_git_status', 'Show current git status for the system repo', {}, async () => {
     return { content: [{ type: 'text', text: runGitSystemRepo('status') }] };
 });
@@ -195,7 +268,11 @@ server.tool('system_repo_git_add', 'Stage all changes in the system repo', {}, a
 });
 
 server.tool('system_repo_git_commit', 'Commit staged changes in the system repo', { message: z.string() }, async ({ message }) => {
-    return { content: [{ type: 'text', text: runGitSystemRepo(`commit -m ${JSON.stringify(message)}`) }] };
+    const result = runGitSystemRepo(`commit -m ${JSON.stringify(message)}`);
+    if (!result.startsWith('ERROR:')) {
+        trySyncToCloud().catch(() => { /* never throws */ });
+    }
+    return { content: [{ type: 'text', text: result }] };
 });
 
 server.tool('system_repo_git_push', 'Push system repo to remote', {}, async () => {

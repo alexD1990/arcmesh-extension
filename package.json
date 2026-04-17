@@ -20,6 +20,10 @@
       {
         "command": "arcmesh.activate",
         "title": "ArcMesh: Activate"
+      },
+      {
+        "command": "arcmesh.configureCloudSync",
+        "title": "ArcMesh: Configure Cloud Sync"
       }
     ]
   },
